@@ -71,3 +71,11 @@ def test_free_heal_option_with_ocr_typo():
             ("좋은 물건 좀 선물해 주』!", "0% 확률로 HP 30% 회복, 50% 확률로 랜덤 소리 5개 획티")]
     idx, _ = choose_option(opts, 10, "운명과 흥정해 보시겠나요?")
     assert idx == 1
+
+
+def test_quiz_with_missing_answer_is_detected():
+    from stella_auto.runner import is_quiz, quiz_answer
+    q = "음. … 별의 탑이 가장 좋아하는 숫자는 월까?"
+    assert is_quiz(q)
+    assert quiz_answer(q, [("1? 길이 하나 뿐이니까", "")]) is None
+    assert quiz_answer(q, [("1? 길이 하나 뿐이니까", ""), ("3? 항상 그렇게 선택했으니까......", "")]) == 1

@@ -98,6 +98,7 @@ class Bot:
         self._last_cards: tuple | None = None  # 직전에 읽은 카드 (두 번 연속 같아야 고른다)
         self._last_choice_bands: tuple | None = None
         self._declined: str | None = None  # ESC로 안 고르고 나간 선택지 질문
+        self._quiz_waits = 0
         self.loading_at: float | None = None  # 층 사이 로딩을 본 때 (방 제목을 놓치면 이걸로 층을 센다)
         self.floor_changed_at = 0.0
         self.last_talk_at = 0.0
@@ -269,6 +270,13 @@ class Bot:
             time.sleep(0.4)
             return
         pairs = [(o.text, o.effect) for o in options]
+        if is_quiz(question) and quiz_answer(question, pairs) is None and self._quiz_waits < 8:
+            # 정답지에 있는 퀴즈인데 정답 보기가 아직 안 보인다: 보기가 하나씩 나타나는 중이다
+            # (보기 하나만 읽고 틀린 답을 고른 일이 있었다)
+            self._quiz_waits += 1
+            time.sleep(0.5)
+            return
+        self._quiz_waits = 0
         idx, rule = choose_option(pairs, self.run.floor, question)
         if idx < 0 and self._declined == question:
             # ESC로 안 닫히는 선택지: 가장 싼 쪽 (첫 번째 숫자가 가장 작은 것)
@@ -1102,6 +1110,11 @@ QUIZ = {
 }
 _QUIZ_KEYS = [q.replace(" ", "") for q in QUIZ]
 _QUIZ_ANSWERS = list(QUIZ.values())
+
+
+def is_quiz(question: str) -> bool:
+    q = question.replace(" ", "")
+    return bool(q) and process.extractOne(q, _QUIZ_KEYS, scorer=fuzz.ratio, score_cutoff=75) is not None
 
 
 def quiz_answer(question: str, options: list[tuple[str, str]]) -> int | None:
