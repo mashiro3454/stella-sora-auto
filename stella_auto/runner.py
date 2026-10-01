@@ -107,6 +107,7 @@ class Bot:
         self.joined_midway = False  # 봇을 층 중간에 켰는지 (전투 끝을 이미 지나쳤을 수 있다)
         self.enhance_count = 0  # 이 거래의 방에서 강화머신을 누른 횟수
         self.shop_done = False
+        self.shop_search_start: float | None = None
         self.shop_plan = None
         self.shop_queue: list = []
         self.shop_rerolled = False
@@ -302,7 +303,8 @@ class Bot:
         self.combat_done = room not in COMBAT_ROOMS
         self.joined_midway = False
         self.enhance_count = 0
-        self.shop_done = room != "거래"
+        self.shop_done = not self.has_shop(floor, room)
+        self.shop_search_start = None
         self.shop_plan = None
         self.shop_queue = []
         self.shop_rerolled = False
@@ -393,6 +395,12 @@ class Bot:
         return any(fuzz.ratio(name, t) >= 60 for t in self.talked if t != "?")
 
     # -- 거래의 방 (강화머신, 상점) ------------------------------------------------
+    def has_shop(self, floor: int | None = None, room: str | None = None) -> bool:
+        """이 층에 상점이 있는지: 거래의 방, 그리고 20층 (보스 뒤 마지막 상점)."""
+        floor = self.run.floor if floor is None else floor
+        room = self.room if room is None else room
+        return room == "거래" or floor == 20
+
     @property
     def shop_index(self) -> int:
         return SHOP_INDEX_BY_FLOOR.get(self.run.floor, 1)
@@ -551,7 +559,7 @@ class Bot:
         # 2) 화면에 말 안 건 NPC 이름표가 있으면 그쪽으로 걸어간다 (상점 NPC는 거래의 방에서 강화 뒤에만)
         if now - self.npc_scanned > NPC_SCAN_EVERY:
             self.npc_scanned = now
-            shop_ok = self.room == "거래" and not self.shop_done and not self.want_enhance(img)
+            shop_ok = self.has_shop() and not self.shop_done and not self.want_enhance(img)
             todo = [lb for lb in self.npc_labels(img) if not self.already_talked(lb[0]) and (not lb[2] or shop_ok)]
             if todo:
                 name, box, _ = min(todo, key=lambda lb: abs(lb[1][0] - char[0]) + abs(lb[1][1] - char[1]))
@@ -576,8 +584,11 @@ class Bot:
                 return None
 
         # 2-1-1) 거래의 방은 강화머신과 상점이 끝나야 나간다
-        if self.room == "거래" and (self.want_enhance(img) or not self.shop_done):
-            if now - self.floor_changed_at < TRADE_TIMEOUT:
+        # 20층은 보스를 잡은 뒤 마지막 상점이 있다 (돈을 다 쓴다)
+        if self.has_shop() and (self.want_enhance(img) or not self.shop_done) and self.combat_done:
+            if self.shop_search_start is None:
+                self.shop_search_start = now  # 20층은 보스전이 길어서 층 시작이 아니라 여기서부터 잰다
+            if now - self.shop_search_start < TRADE_TIMEOUT:
                 # 다음 루프에서 이름표부터 다시 찾고, 둘러보기는 두 번에 한 번만 (근처에서 멀어지지 않게)
                 self.npc_scanned = 0.0
                 self.trade_tick += 1
