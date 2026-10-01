@@ -123,7 +123,8 @@ def find_game_window(process_name: str = PROCESS_NAME) -> GameWindow | None:
         if user32.IsWindowVisible(hwnd) and _process_name(hwnd).lower() == process_name.lower():
             rect = wintypes.RECT()
             user32.GetClientRect(hwnd, ctypes.byref(rect))
-            if rect.right > 0 and rect.bottom > 0:
+            # 최소화된 창은 클라이언트 크기가 0이지만 "최소화됨"으로 알려주려고 같이 담는다
+            if (rect.right > 0 and rect.bottom > 0) or user32.IsIconic(hwnd):
                 found.append(hwnd)
         return True
 
@@ -212,8 +213,11 @@ def main(argv: list[str] | None = None) -> int:
     if win is None:
         print(f"{PROCESS_NAME} 창을 못 찾음. 게임이 켜져 있어?", file=sys.stderr)
         return 1
+    if win.minimized:
+        print("게임 창이 최소화돼 있어서 못 찍음. 창을 다시 열어줘", file=sys.stderr)
+        return 1
     print(f"창: '{win.title}' 클라이언트 {win.width}x{win.height} @ ({win.left},{win.top}) "
-          f"DPI {win.dpi} ({win.dpi * 100 // 96}%)" + (" [최소화됨]" if win.minimized else ""))
+          f"DPI {win.dpi} ({win.dpi * 100 // 96}%)")
     if (win.width, win.height) != (1920, 1080):
         print("주의: 게임 화면이 1920x1080이 아님. 화면 인식 좌표가 어긋날 수 있음")
 
