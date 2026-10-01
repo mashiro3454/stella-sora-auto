@@ -243,6 +243,11 @@ class Navigator:
         if markers:
             m = markers[0]
             heading = nv.angle_of(m.icon[0] - SCREEN_CENTER[0], m.icon[1] - SCREEN_CENTER[1])
+            if self.door_seen and nv.angle_diff(
+                    heading, nv.angle_of(self.door_seen[0] - pos[0], self.door_seen[1] - pos[1])) > 70:
+                # 출구는 화면 밖 표시 쪽에 있다. 크게 다른 쪽에 기억한 문양은 무늬였다
+                # (14층: 오른쪽 가짜 문과 왼쪽 위 표시 사이를 4분 동안 왔다 갔다 했다)
+                self.mark_false_door(self.door_seen, "seen")
             known = self.door_seen or self.memory_exit
             if known and nv.angle_diff(heading, nv.angle_of(known[0] - pos[0], known[1] - pos[1])) < 50:
                 return Goal(known, "seen" if known == self.door_seen else "memory")
