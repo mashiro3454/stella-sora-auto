@@ -147,13 +147,15 @@ class ShopPlan:
 
 
 def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_shop: bool,
-                   reroll_left: int, reroll_price: int | None, reserve: int = 80) -> ShopPlan:
+                   reroll_left: int, reroll_price: int | None, reserve: int = 80,
+                   note_have: dict[int, int] | None = None) -> ShopPlan:
     """살 것 고르기.
 
     - 할인하는 잠재력 음료는 전부 산다.
-    - 소리 (사용자 규칙): 5개 45원은 무조건, 5개 72원은 가진 게 41개 미만이고 쓰는 협주스킬이 있으면,
-      15개 200원은 협주스킬 2개 이상이 쓰면, 5개 90원은 4개 이상이 쓰면. 15개 320/400원은 안 산다.
-      협주스킬 필요량(users)을 못 읽었으면 45원짜리만 산다.
+    - 소리 (사용자 규칙, 협주스킬에 필요한 소리만): 5개 45원은 산다, 5개 72원은 가진 게 41개 미만이면,
+      15개 200원은 협주스킬 2개 이상이 쓰면, 5개 90원은 4개 이상이 쓰면 (단 그 소리만 40개쯤 있고
+      협주스킬에 필요한 다른 소리가 20개 미만이면 안 산다). 15개 320/400원은 안 산다.
+      협주스킬 필요량(users)을 못 읽었으면 45원짜리만 산다. note_have: 협주스킬에 필요한 소리별 가진 개수.
     - 할인 상품을 다 사고도 1000원 이상 남으면 200원짜리 잠재력 음료도 산다.
     - 마지막 상점(20층)에선 돈이 안 남게 200원짜리까지 산다.
     - 카드 리롤용으로 reserve(기본 80원)는 남긴다 (마지막 상점 제외).
@@ -175,7 +177,7 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
     for it in sorted([i for i in avail if i.kind == "potential" and i.discounted], key=lambda i: i.price):
         take(it)
     notes = [i for i in avail if i.kind == "notes"]
-    for it in [i for i in notes if i.note_count == 5 and i.price == PRICES["notes5"][2]]:
+    for it in [i for i in notes if i.note_count == 5 and i.price == PRICES["notes5"][2] and (i.users is None or i.users >= 1)]:
         take(it)  # 5개 45원
     for it in [i for i in notes if i.note_count == 5 and i.price == PRICES["notes5"][1]
                and i.users and (i.have is None or i.have < 41)]:
@@ -183,6 +185,9 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
     for it in [i for i in notes if i.note_count == 15 and i.price == PRICES["notes15"][2] and (i.users or 0) >= 2]:
         take(it)  # 15개 200원
     for it in [i for i in notes if i.note_count == 5 and i.price == PRICES["notes5"][0] and (i.users or 0) >= 4]:
+        others = [v for t, v in (note_have or {}).items() if t != it.note_type]
+        if it.have is not None and it.have >= 40 and any(v < 20 for v in others):
+            continue  # 이 소리만 많고 다른 필요한 소리가 모자라면 정가로는 안 산다
         take(it)  # 5개 90원
     full_potions = sorted([i for i in avail if i.kind == "potential" and not i.discounted], key=lambda i: i.price)
     for it in full_potions:

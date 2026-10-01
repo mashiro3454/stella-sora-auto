@@ -81,10 +81,15 @@ def test_read_shop_half_price_notes(ocr):
 def test_plan_notes_by_ensemble_needs():
     def note(slot, price, old, count, users, have=10):
         return ShopItem(slot, f"소리x{count}", price, old, False, (0, 0), note_type=0, users=users, have=have)
-    items = [note(0, 45, 90, 5, 0), note(1, 72, 90, 5, 1), note(2, 72, 90, 5, 1, have=45), note(3, 200, 400, 15, 2),
+    items = [note(0, 45, 90, 5, 1), note(1, 72, 90, 5, 1), note(2, 72, 90, 5, 1, have=45), note(3, 200, 400, 15, 2),
              note(4, 200, 400, 15, 1), note(5, 90, None, 5, 4), note(6, 90, None, 5, 3), note(7, 320, 400, 15, 6)]
     plan = plan_purchases(items, 3000, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None)
     assert sorted(i.slot for i in plan.buy) == [0, 1, 3, 5]
+    # 협주스킬에 안 쓰는 소리는 45원이어도 안 산다
+    items[0].users = 0
+    plan = plan_purchases(items, 3000, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None)
+    assert 0 not in [i.slot for i in plan.buy]
+    items[0].users = 1
     # 필요량을 못 읽었으면 45원짜리만
     for i in items:
         i.users = None
@@ -109,3 +114,13 @@ def test_last_shop_spends_leftover_on_notes():
              ShopItem(2, "집중의 소리x5", 90, None, False, (0, 0), note_type=4, users=1)]
     plan = plan_purchases(items, 700, shop_index=4, last_shop=True, reroll_left=0, reroll_price=None)
     assert sorted(i.slot for i in plan.buy) == [0, 1, 2]
+
+
+def test_full_price_notes_skipped_when_others_low():
+    item = ShopItem(0, "바람의 소리x5", 90, None, False, (0, 0), note_type=8, users=6, have=42)
+    plan = plan_purchases([item], 3000, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None,
+                          note_have={8: 42, 6: 15, 0: 30})
+    assert plan.buy == []
+    plan = plan_purchases([item], 3000, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None,
+                          note_have={8: 42, 6: 25, 0: 30})
+    assert plan.buy == [item]

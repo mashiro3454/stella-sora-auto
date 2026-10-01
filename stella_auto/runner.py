@@ -488,7 +488,8 @@ class Bot:
             if self.shop_rerolled:
                 left = 0
             self.shop_plan = plan_purchases(items, gold, shop_index=self.shop_index, last_shop=self.run.floor >= 20,
-                                            reroll_left=left, reroll_price=price)
+                                            reroll_left=left, reroll_price=price,
+                                            note_have=self.note_needs.have if self.note_needs else None)
             self.shop_queue = list(self.shop_plan.buy)
             desc = ", ".join(f"{i.slot}:{i.name}({i.price}{'/' + str(i.old_price) if i.discounted else ''}"
                              f"{' 품절' if i.sold_out else ''}"
@@ -1012,6 +1013,7 @@ class Bot:
 
     def _play(self, max_floors: int) -> None:
         s = self.det.detect(self.grab()).state
+        self.log("시작", f"봇 시작, 지금 화면 {s}")
         if s in ("field", "card_select", "enhance_select", "npc_choice", "dialog", "shop", "shop_buy",
                  "esc_map", "notes_gain", "ensemble_up", "tap_continue"):
             pass  # 탑 안: 필드에 나오면 on_field가 ESC 지도로 층을 확인한다
