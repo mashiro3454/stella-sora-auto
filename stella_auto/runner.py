@@ -1210,6 +1210,10 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
     for i, s in enumerate(texts):
         if ("획득" in s or "회복" in s) and not any(w in s for w in loss):
             return i, "모름: 잃는 것 없는 쪽 (기록)"
+    for i, (t, e) in enumerate(options):
+        if not e.strip() and t.strip():
+            # 효과가 없는 보기 ("지금은 안 돼", "됐어."): 아무것도 안 잃는다
+            return i, "모름: 아무 일 없는 쪽 (기록)"
     if texts and all(any(w in s for w in ("소모", "차감")) for s in texts):
         # 전부 돈/소리를 내는 선택지 (예: 소리 10개를 140원/90원에): 사지 않고 ESC로 나간다
         return -1, "모름: 전부 돈이 들어서 안 고름 (기록)"

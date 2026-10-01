@@ -79,3 +79,10 @@ def test_quiz_with_missing_answer_is_detected():
     assert is_quiz(q)
     assert quiz_answer(q, [("1? 길이 하나 뿐이니까", "")]) is None
     assert quiz_answer(q, [("1? 길이 하나 뿐이니까", ""), ("3? 항상 그렇게 선택했으니까......", "")]) == 1
+
+
+def test_do_nothing_option_preferred_over_buying():
+    opts = [("노래, 골라도 돼?", "1400 소모, 10개의 폭발의 소리 획득"), ("노래, 골라도 돼?", "1400 소모, 10개의 집중의 소리 획득"),
+            ("네가 듣고 싶은 걸로 듣자.", "900 소모, 10개의 랜덤 소리 획득"), ("지금은 안 돼.", "")]
+    idx, rule = choose_option(opts, 17, "노래가 듣고 싶어? 자, 같이 듣자.")
+    assert idx == 3
