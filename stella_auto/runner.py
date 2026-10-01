@@ -43,6 +43,8 @@ TITLE_FLOOR_RE = re.compile(r"(\d+)\s*/\s*20")
 ROOM_NAMES = ("전투", "선택", "강적", "거래", "리더")
 HUD_TEXT = ("기록점수", "자동전투", "전투중", "레벨", "간단히", "대화")
 NPC_SCAN_EVERY = 2.5  # 초. 이름표 찾기(OCR 전체 화면)는 무거워서 가끔만
+TALK_COOLDOWN = 8.0  # 대화가 끝나도 "F 대화"가 한동안 남아 있어서, 말 건 뒤 이만큼은 다시 안 건다
+GAMBLE_EXIT_WAIT = 8.0  # 3층: 출구가 보여도 전투 뒤 NPC가 나올 수 있어서 이만큼 더 둘러본다
 
 # 메뉴 버튼 (게임 화면 1920x1080 기준, 실험으로 확인)
 BTN_DEPART = (1706, 978)  # 난이도 선택 "출발" (바로 왼쪽 "빠른 전투"는 절대 누르지 않는다)
@@ -74,6 +76,10 @@ class Bot:
         self.title_checked = 0.0
         self.npc_scanned = 0.0
         self._card_tries = 0
+        self._last_cards: tuple | None = None  # 직전에 읽은 카드 (두 번 연속 같아야 고른다)
+        self.last_talk_at = 0.0
+        self.exit_seen_at: float | None = None  # 이 층에서 출구를 처음 본 때
+        self.floor_known = False  # 봇을 탑 중간에서 켜면 처음엔 몇 층인지 모른다
         self.gamble_won = False
         self.restart_pending = ""
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -135,6 +141,15 @@ class Bot:
             self.log("카드", "카드를 못 읽음, 잠깐 기다림")
             time.sleep(0.5)
             return
+        # 카드가 날아 들어오는 중에 읽으면 이름과 레벨 줄이 다른 카드끼리 섞인다.
+        # 0.3초 간격으로 두 번 읽어서 똑같을 때만 고른다.
+        sig = tuple((c.slot, c.potential.id if c.potential else c.raw_name, c.level_from, c.level_to, c.bonus)
+                    for c in cards)
+        if sig != self._last_cards:
+            self._last_cards = sig
+            time.sleep(0.3)
+            return
+        self._last_cards = None
         d = self.chooser.choose_enhance(cards, self.run) if enhance else self.chooser.choose(cards, self.run)
         desc = [f"{c.potential.name if c.potential else c.raw_name}({'새' if c.is_new else c.level_from}>{c.level_to})"
                 f"={d.values.get(c.slot)}" for c in cards]
@@ -187,6 +202,9 @@ class Bot:
 
     def new_floor(self, floor: int, room: str) -> None:
         self.run.floor = floor
+        self.floor_known = True
+        self.exit_seen_at = None
+        self._last_cards = None
         self.room = room
         self.talked = set()
         self.exit_angle = None
@@ -261,6 +279,9 @@ class Bot:
             return "restart"
         if self.check_title(img):
             return "next_floor"
+        if not self.floor_known:
+            self.read_floor_from_map()
+            return None
         char = nv.find_character(img)
         if char is None:
             time.sleep(0.3)
@@ -268,10 +289,12 @@ class Bot:
         now = time.monotonic()
 
         # 1) "F 대화"가 떠 있으면, 아직 말 안 건 NPC면 말을 건다
-        if nv.find_talk_prompt(img):
+        if nv.find_talk_prompt(img) and now - self.last_talk_at > TALK_COOLDOWN:
             name = self.nearest_label(img, char)
-            if name not in self.talked:
+            # 이름을 못 읽었는데 이 층에서 이미 누군가와 이야기했다면, 대개 방금 그 NPC다
+            if name not in self.talked and not (name == "?" and self.talked):
                 self.talked.add(name)
+                self.last_talk_at = now
                 self.log("NPC", f"{name}에게 F로 말 걸기", img)
                 self.gi.key("f")
                 time.sleep(1.0)
@@ -322,7 +345,13 @@ class Bot:
             return None
         self.exit_angle = nv.angle_of(target[0] - char[0], target[1] - char[1])
         self.idle_since = None
-        if self.run.floor >= GAMBLE_LAST_FLOOR and not self.gamble_won:
+        if self.exit_seen_at is None:
+            self.exit_seen_at = now
+        if not self.gamble_won and self.run.floor >= GAMBLE_LAST_FLOOR:
+            # 3층에서도 650원 NPC가 나올 수 있다. 출구가 보인 뒤에도 잠깐 NPC를 더 찾고 나서 판단한다
+            if self.run.floor == GAMBLE_LAST_FLOOR and now - self.exit_seen_at < GAMBLE_EXIT_WAIT:
+                time.sleep(0.5)
+                return None
             self.restart_pending = f"{GAMBLE_LAST_FLOOR}층까지 650원 선택지를 못 받음"
             return "restart"
         self.log("이동", f"출구로 걸어감 {tuple(round(v) for v in target)}", img)
@@ -445,6 +474,9 @@ class Bot:
                 self.new_floor(int(m.group(1)), next((r for r in ROOM_NAMES if r in text), ""))
             self.gi.key("esc")
             time.sleep(0.6)
+        if not self.floor_known:
+            self.floor_known = True  # 못 읽어도 계속 ESC를 누르지 않게. 다음 방 제목에서 바로잡힌다
+            self.log("층", f"지도에서 층을 못 읽음, {self.run.floor}층으로 둠")
 
     def play(self, max_floors: int) -> None:
         """게임 창이 잠깐 가려지거나 다른 창이 앞으로 와도 꺼지지 않고, 기다렸다가 화면을 다시 보고 이어 간다."""
@@ -465,8 +497,7 @@ class Bot:
         s = self.det.detect(self.grab()).state
         if s in ("field", "card_select", "enhance_select", "npc_choice", "dialog", "shop", "shop_buy",
                  "esc_map", "notes_gain", "ensemble_up", "tap_continue"):
-            if s == "field":
-                self.read_floor_from_map()
+            pass  # 탑 안: 필드에 나오면 on_field가 ESC 지도로 층을 확인한다
         else:
             self.start_from_menu(give_up=False)
         while True:
