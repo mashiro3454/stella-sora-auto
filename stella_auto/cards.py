@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 from rapidfuzz import fuzz, process
 
@@ -79,25 +80,66 @@ def _center(line: OcrLine) -> tuple[float, float]:
     return x + w / 2, y + h / 2
 
 
+NAME_SCALES = (0.6, 0.8, 1.0, 1.5, 3.0)  # 굵고 큰 카드 이름은 오히려 줄여야 읽히기도 한다
+
+
+def _read_name_above(img: np.ndarray, ocr: KoreanOcr, level_box: tuple[int, int, int, int],
+                     choices: list[str]) -> tuple[str, int, float] | None:
+    """"레벨 N" 줄 바로 위의 카드 이름을 여러 배율로 읽어, 이름 목록과 가장 비슷한 것을 고른다.
+
+    전체 화면 OCR이 카드 이름만 통째로 빼먹거나 "숙청 명령"을 "^大4 여 근4"로 읽는 경우가 있다.
+    같은 글자도 배율에 따라 되기도 안 되기도 해서 여러 번 읽어 본다.
+    """
+    x, y, w, h = level_box
+    cx = x + w // 2
+    crop = img[max(0, y - 66):max(0, y - 2), max(0, cx - 230):cx + 230]
+    if crop.size == 0:
+        return None
+    crop = cv2.copyMakeBorder(crop, 40, 40, 40, 40, cv2.BORDER_REPLICATE)
+    flat = [c.replace(" ", "") for c in choices]
+    best: tuple[str, int, float] | None = None
+    for sc in NAME_SCALES:
+        text = ocr.text(crop, None, sc).replace("\n", " ").strip()
+        if not text:
+            continue
+        m = process.extractOne(text.replace(" ", ""), flat, scorer=fuzz.ratio)
+        if m and (best is None or m[1] > best[2]):
+            best = (text, m[2], m[1])
+        if best and best[2] >= 95:
+            break
+    return best if best and best[2] >= MATCH_THRESHOLD else None
+
+
 def read_cards(img: np.ndarray, ocr: KoreanOcr, pool: dict[int, PotentialInfo]) -> list[Card]:
     lines = ocr.read(img, CARD_AREA)
     names_by_id = {pid: p.name for pid, p in pool.items() if p.name}
     choices = list(names_by_id.values())
     ids = list(names_by_id.keys())
 
-    # 카드 이름 후보: 큰 글자이고, 바로 아래 비슷한 x에 "레벨" 줄이 있거나 이름 목록과 잘 맞는 것
-    name_lines = []
+    # 카드 이름 후보: 큰 글자이고 이름 목록과 잘 맞는 것
+    found: list[tuple[str, tuple[float, float], int, float]] = []  # (읽은 글자, 가운데, 잠재력 ID, 점수)
     for l in lines:
         if l.box[3] < NAME_MIN_HEIGHT or "레벨" in l.text.translate(_LEVEL_FIX) or "달성" in l.text:
             continue
         best = process.extractOne(l.text.replace(" ", ""), [c.replace(" ", "") for c in choices], scorer=fuzz.ratio)
         if best and best[1] >= MATCH_THRESHOLD:
-            name_lines.append((l, ids[best[2]], best[1]))
-    name_lines.sort(key=lambda t: _center(t[0])[0])
+            found.append((l.text, _center(l), ids[best[2]], best[1]))
 
+    # "레벨 N" 줄은 잘 읽힌다. 위에 이름이 안 잡힌 레벨 줄이 있으면 그 위를 따로 다시 읽는다
+    for l in lines:
+        if not parse_level(l.text):
+            continue
+        lx, ly = _center(l)
+        if any(abs(c[0] - lx) < 170 and 0 < ly - c[1] < 70 for _, c, _, _ in found):
+            continue
+        hit = _read_name_above(img, ocr, l.box, choices)
+        if hit:
+            text, idx, score = hit
+            found.append((text, (lx, ly - 34), ids[idx], score))
+
+    found.sort(key=lambda t: t[1][0])
     cards = []
-    for slot, (line, pid, score) in enumerate(name_lines):
-        cx, cy = _center(line)
+    for slot, (raw_name, (cx, cy), pid, score) in enumerate(found):
         level = None
         raw_level = ""
         recommend = None
@@ -127,7 +169,7 @@ def read_cards(img: np.ndarray, ocr: KoreanOcr, pool: dict[int, PotentialInfo]) 
         cards.append(Card(
             slot=slot,
             click=(int(cx), int(cy - 250)),
-            raw_name=line.text,
+            raw_name=raw_name,
             potential=info,
             match_score=score,
             level_from=level[0],

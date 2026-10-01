@@ -167,9 +167,11 @@ class StableDetector:
         self.frames = frames
         self._last: str | None = None
         self._count = 0
+        self.last_raw = ""  # 바로 직전 프레임 하나의 판정 (로딩처럼 짧게 지나가는 화면을 놓치지 않으려고)
 
     def update(self, img: np.ndarray) -> Detection:
         d = self.detector.detect(img)
+        self.last_raw = d.state
         self._count = self._count + 1 if d.state == self._last else 1
         self._last = d.state
         if self._count < self.frames:

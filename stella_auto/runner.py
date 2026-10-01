@@ -42,7 +42,7 @@ GAMBLE_LAST_FLOOR = 3  # 650원 도박은 1~3층에서만 나온다
 TITLE_BOX = (600, 40, 1320, 230)  # 방에 들어가면 잠깐 뜨는 "선택의 방 / 2/20층"
 TITLE_FLOOR_RE = re.compile(r"(\d+)\s*/\s*20")
 ROOM_NAMES = ("전투", "선택", "강적", "거래", "리더")
-HUD_TEXT = ("기록점수", "점수", "자동전투", "전투중", "레벨", "레멜", "레텔", "간단히", "대화")
+HUD_TEXT = ("기록점수", "점수", "자동전투", "전투중", "레벨", "레멜", "레텔", "간단히", "대화", "코인", "소리")
 NPC_SCAN_EVERY = 2.5  # 초. 이름표 찾기(OCR 전체 화면)는 무거워서 가끔만
 TALK_COOLDOWN = 8.0  # 대화가 끝나도 "F 대화"가 한동안 남아 있어서, 말 건 뒤 이만큼은 다시 안 건다
 GAMBLE_EXIT_WAIT = 8.0  # 3층: 출구가 보여도 전투 뒤 NPC가 나올 수 있어서 이만큼 더 둘러본다
@@ -80,6 +80,7 @@ class Bot:
         self._last_cards: tuple | None = None  # 직전에 읽은 카드 (두 번 연속 같아야 고른다)
         self._last_choice_bands: tuple | None = None
         self.loading_at: float | None = None  # 층 사이 로딩을 본 때 (방 제목을 놓치면 이걸로 층을 센다)
+        self.floor_changed_at = 0.0
         self.last_talk_at = 0.0
         self.exit_seen_at: float | None = None  # 이 층에서 출구를 처음 본 때
         self.floor_known = False  # 봇을 탑 중간에서 켜면 처음엔 몇 층인지 모른다
@@ -198,7 +199,19 @@ class Bot:
             self._gamble_gold_before = gold_before
         time.sleep(1.0)
 
+    def saw_loading(self) -> None:
+        if self.floor_known and self.loading_at is None:
+            self.loading_at = time.monotonic()
+
+    def walk_stop(self, im: np.ndarray, *, talk: bool = False) -> bool:
+        """걷기를 멈출 화면인지. 문에 들어가 로딩이 뜨는 순간도 여기서 기억해 둔다."""
+        st = self.det.detect(im).state
+        if st == "loading":
+            self.saw_loading()
+        return st != "field" or (talk and nv.find_talk_prompt(im) is not None)
+
     def new_floor(self, floor: int, room: str) -> None:
+        self.floor_changed_at = time.monotonic()
         self.loading_at = None
         self.run.floor = floor
         self.floor_known = True
@@ -225,6 +238,12 @@ class Bot:
                 floor = int(m.group(1))
             room = room or next((r for r in ROOM_NAMES if r in t), "")
         if floor is None:
+            # "N/20층" 줄이 먼저 사라져도 "선택의 방" 같은 방 이름은 조금 더 남는다
+            if room and now - self.floor_changed_at > 12:
+                self.title_seen = now
+                self.new_floor(self.run.floor + 1, room)
+                self.log("층", "층 번호는 못 읽었지만 새 방 이름을 봐서 다음 층으로 셈")
+                return True
             return False
         self.title_seen = now
         if floor != self.run.floor or (room and not self.room):
@@ -238,6 +257,8 @@ class Bot:
         lines = self.ocr.read(img, (0, 0, 1920, 960))
         out = []
         for l in lines:
+            if re.search(r"[\[\]×xX]|\d{2,}", l.text):
+                continue  # 왼쪽에 뜨는 아이템 획득 알림 "[스텔라 코인]×80"
             t = re.sub(r"[^가-힣]", "", l.text)  # OCR이 "4베0}트리스"처럼 섞어 읽을 때가 있어서 한글만
             x, y, w, h = l.box
             if not (13 <= h <= 32 and 2 <= len(t) <= 6) or len(t) < len(l.text.replace(" ", "")) / 2:
@@ -258,6 +279,10 @@ class Bot:
                          and is_green_text(img, o.box)), "")
             out.append((t, l.box, fuzz.ratio(kind, "상점") >= 50))
         return out
+
+    def already_talked(self, name: str) -> bool:
+        """OCR이 같은 이름을 "베르너/베트너/베드너"처럼 다르게 읽어서, 비슷하면 같은 NPC로 친다."""
+        return any(fuzz.ratio(name, t) >= 60 for t in self.talked if t != "?")
 
     def nearest_label(self, img: np.ndarray, char: tuple[float, float]) -> str:
         labels = self.npc_labels(img)
@@ -297,7 +322,7 @@ class Bot:
         if nv.find_talk_prompt(img) and now - self.last_talk_at > TALK_COOLDOWN:
             name = self.nearest_label(img, char)
             # 이름을 못 읽었는데 이 층에서 이미 누군가와 이야기했다면, 대개 방금 그 NPC다
-            if name not in self.talked and not (name == "?" and self.talked):
+            if not self.already_talked(name) and not (name == "?" and self.talked):
                 self.talked.add(name)
                 self.last_talk_at = now
                 self.log("NPC", f"{name}에게 F로 말 걸기", img)
@@ -310,14 +335,14 @@ class Bot:
         # 2) 화면에 말 안 건 NPC 이름표가 있으면 그쪽으로 걸어간다 (상점 NPC는 아직 건너뜀)
         if now - self.npc_scanned > NPC_SCAN_EVERY:
             self.npc_scanned = now
-            todo = [lb for lb in self.npc_labels(img) if lb[0] not in self.talked and not lb[2]]
+            todo = [lb for lb in self.npc_labels(img) if not self.already_talked(lb[0]) and not lb[2]]
             if todo:
                 name, (x, y, w, h), _ = min(todo, key=lambda lb: abs(lb[1][0] - char[0]) + abs(lb[1][1] - char[1]))
                 self.log("NPC", f"{name} 쪽으로 걸어감 ({x + w // 2}, {y + h // 2})", img)
                 tracker = nv.TemplateTracker(img, (x - 4, y - 4, x + w + 4, y + h + 4), threshold=0.5)
                 res = nv.walk_toward(lambda k, sec: self.gi.hold(list(k), sec), self.grab,
                                      lambda im, ch: tracker.update(im),
-                                     stop=lambda im: self.det.detect(im).state != "field" or nv.find_talk_prompt(im) is not None,
+                                     stop=lambda im: self.walk_stop(im, talk=True),
                                      arrive_dist=50, max_steps=30)
                 self.log("NPC", f"걷기 결과 {res.reason} ({res.steps}걸음)")
                 if res.reason != "stopped":
@@ -368,8 +393,7 @@ class Bot:
             return t
 
         res = nv.walk_toward(lambda k, sec: self.gi.hold(list(k), sec), self.grab, tgt,
-                             stop=lambda im: self.det.detect(im).state != "field",
-                             arrive_dist=0, max_steps=45, initial_angle=self.exit_angle)
+                             stop=self.walk_stop, arrive_dist=0, max_steps=45, initial_angle=self.exit_angle)
         self.log("이동", f"걷기 결과 {res.reason} ({res.steps}걸음)")
         return None
 
@@ -390,8 +414,8 @@ class Bot:
             s = d.state
             if s != last_state and s != "transition":
                 last_state = s
-            if s == "loading" and self.floor_known:
-                self.loading_at = time.monotonic()
+            if self.stable.last_raw == "loading":
+                self.saw_loading()
             if s in ("transition", "loading", "unknown"):
                 time.sleep(0.2)
                 continue
