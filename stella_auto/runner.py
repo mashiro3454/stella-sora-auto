@@ -46,6 +46,7 @@ HUD_TEXT = ("기록점수", "점수", "자동전투", "전투중", "레벨", "�
 NPC_SCAN_EVERY = 2.5  # 초. 이름표 찾기(OCR 전체 화면)는 무거워서 가끔만
 TALK_COOLDOWN = 8.0  # 대화가 끝나도 "F 대화"가 한동안 남아 있어서, 말 건 뒤 이만큼은 다시 안 건다
 GAMBLE_EXIT_WAIT = 8.0  # 3층: 출구가 보여도 전투 뒤 NPC가 나올 수 있어서 이만큼 더 둘러본다
+CHOICE_SEARCH = 30.0  # 선택의 방에서 NPC를 이만큼 찾아도 없으면 그냥 나간다
 COMBAT_TIMEOUT = 150.0  # 전투방에서 "소리 획득"을 이만큼 못 보면 전투 끝을 놓친 것으로 보고 진행
 # 층 구성 (사용자 설명): 1~6 전투/선택/전투/강적/거래/리더, 7~13 전투/강적/선택/전투/강적/거래/리더,
 # 14~20 같은 구성. 전투가 있는 방은 "소리 획득"(전투 끝 보상)을 본 뒤에 나간다
@@ -221,7 +222,7 @@ class Bot:
         return st != "field" or (talk and nv.find_talk_prompt(im) is not None)
 
     def new_floor(self, floor: int, room: str) -> None:
-        room = room or ROOM_BY_FLOOR.get(floor, "")
+        room = ROOM_BY_FLOOR.get(floor, "") or room  # OCR로 읽은 방 이름보다 층 구성표를 믿는다
         self.combat_done = room not in COMBAT_ROOMS
         self.floor_changed_at = time.monotonic()
         self.loading_at = None
@@ -251,7 +252,9 @@ class Bot:
             room = room or next((r for r in ROOM_NAMES if r in t), "")
         if floor is None:
             # "N/20층" 줄이 먼저 사라져도 "선택의 방" 같은 방 이름은 조금 더 남는다
-            if room and now - self.floor_changed_at > 12:
+            # 방 제목은 대화가 끝난 뒤 다시 뜨기도 해서, 지금 방과 종류가 다를 때만 다음 층으로 본다
+            expected = ROOM_BY_FLOOR.get(self.run.floor + 1, "")
+            if room and room != self.room and (not expected or room == expected) and now - self.floor_changed_at > 12:
                 self.title_seen = now
                 self.new_floor(self.run.floor + 1, room)
                 self.log("층", "층 번호는 못 읽었지만 새 방 이름을 봐서 다음 층으로 셈")
@@ -392,7 +395,7 @@ class Bot:
             self.log("전투", f"{COMBAT_TIMEOUT:.0f}초 동안 소리 획득을 못 봄, 전투가 끝난 것으로 보고 진행", img)
 
         # 3) 선택의 방은 NPC와 이야기하기 전엔 나가지 않는다
-        if self.room == "선택" and not self.talked:
+        if self.room == "선택" and not self.talked and now - self.floor_changed_at < CHOICE_SEARCH:
             self._explore("선택의 방 NPC를 찾으려고 둘러봄")
             return None
 
