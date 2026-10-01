@@ -152,3 +152,17 @@ def test_gamble_gold_with_coin_read_as_digit():
     assert _judge(680, [1330, 1330, 1330])[0] is True
     assert _judge(7680, [1330, 1330, 1330])[0] is True  # 앞의 값을 잘못 읽어도
     assert _judge(680, [5555, 5555, 5555])[0] is None  # 말이 안 되면 아직 모름
+
+
+def test_unknown_gamble_rechecked_on_card_screen():
+    # 07:07: 650원 결과를 못 읽고 이긴 것으로 이어 감 -> 다음 카드 화면의 돈으로 다시 확인
+    from stella_auto.runner import Bot
+    from stella_auto.strategy import RunState
+    for gold, won in [(1290, True), (310, False), (7310, False)]:
+        b = Bot.__new__(Bot)
+        b.run = RunState(floor=3)
+        b.gamble_won, b.run_tracked, b.restart_pending = True, False, ""
+        b._gamble_verify = 510
+        b.log = lambda *a, **k: None
+        b.verify_gamble(gold)
+        assert b.gamble_won is won and bool(b.restart_pending) is (not won) and b._gamble_verify is None

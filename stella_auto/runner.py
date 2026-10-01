@@ -141,6 +141,7 @@ class Bot:
         self.run_tracked = False  # 이 판을 봇이 1층부터 봤는지 (잠재 레벨 기억이 온전한지)
         self.restart_pending = ""
         self._gamble_at = 0.0
+        self._gamble_verify: int | None = None  # 결과를 못 읽은 650원: 도박 전 돈 (카드 화면에서 다시 확인)
         log_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
         self.log_path = log_dir / f"run_{stamp}.jsonl"
@@ -221,6 +222,24 @@ class Bot:
                             return False, note
         return None, f"아직 모름 (돈 {before} -> {golds})"
 
+    def verify_gamble(self, gold: int) -> None:
+        """650원 결과를 못 읽고 이긴 것으로 이어 간 판: 다음 카드 화면의 돈으로 다시 확인한다.
+        (그사이 소리 판매/리롤로 조금 바뀔 수 있어서 넉넉하게 본다. 코인 그림을 숫자로 읽은 앞자리도 떼어 본다)"""
+        before = getattr(self, "_gamble_verify", None)
+        if before is None:
+            return
+        self._gamble_verify = None
+        diffs = [g - before for g in [gold] + ([int(str(gold)[1:])] if len(str(gold)) >= 3 else [])]
+        if any(350 <= d <= 1500 for d in diffs):
+            self.log("650원", f"카드 화면 돈으로 다시 확인: 성공 ({before} -> {gold})")
+        elif any(-450 <= d <= -100 for d in diffs):
+            self.gamble_won = False
+            self.run.keep_after_gamble = False
+            self.restart_pending = "650원 도박 실패 (카드 화면 돈으로 다시 확인)"
+            self.log("650원", f"카드 화면 돈으로 다시 확인: 실패 ({before} -> {gold})")
+            if self.run_tracked:
+                self.save_state()
+
     def read_gold(self, img: np.ndarray) -> int | None:
         text = self.ocr.text(img, (1700, 15, 1910, 85)).replace(",", "")
         nums = re.findall(r"\d+", text)
@@ -231,6 +250,7 @@ class Bot:
         gold = self.read_gold(img)
         if gold is not None:
             self.run.gold = gold
+            self.verify_gamble(gold)
         cards = read_cards(img, self.ocr, self.pool)
         # 카드가 다 안 읽혔거나 레벨을 못 읽은 카드가 있으면 다시 읽는다 (그대로 고르면 엉뚱하게 리롤한다)
         unsure = len(cards) < 3 or any(not c.level_known for c in cards)
@@ -604,16 +624,22 @@ class Bot:
     def on_field(self, img: np.ndarray) -> str | None:
         if getattr(self, "_gamble_gold_before", None) is not None:
             won, why = self.judge_gamble()
-            if won is not None or time.monotonic() - self._gamble_at > 12:
-                won = bool(won) if won is not None else True  # 끝까지 모르면 이어 간다 (잘못 재시작하면 이긴 판을 버린다)
-                self.gamble_won = self.gamble_won or won
-                self.run.keep_after_gamble = self.gamble_won
-                self.log("650원", f"{'성공' if won else '실패'} ({why})", img)
-                if self.run_tracked:
-                    self.save_state()
-                self._gamble_gold_before = None
-                if not won:
-                    self.restart_pending = "650원 도박 실패"
+            if won is None and time.monotonic() - self._gamble_at <= 12:
+                # 결과를 읽을 때까지 제자리에서 기다린다 (07:07: 결과를 못 읽은 채 출구로 가서 다음 층에서 짐작했다)
+                time.sleep(0.3)
+                return None
+            if won is None:
+                # 끝까지 모르면 이어 가되 (잘못 재시작하면 이긴 판을 버린다), 다음 카드 화면의 돈으로 다시 확인한다
+                self._gamble_verify = self._gamble_gold_before
+                won = True
+            self.gamble_won = self.gamble_won or won
+            self.run.keep_after_gamble = self.gamble_won
+            self.log("650원", f"{'성공' if won else '실패'} ({why})", img)
+            if self.run_tracked:
+                self.save_state()
+            self._gamble_gold_before = None
+            if not won:
+                self.restart_pending = "650원 도박 실패"
         if self.restart_pending:
             return "restart"
         if self.check_title(img):
@@ -999,6 +1025,7 @@ class Bot:
                     self.run_tracked = True
                     self.new_floor(1, "전투")
                     self.gamble_won = False
+                    self._gamble_verify = None
                     self.note_needs = None  # 가진 소리 개수는 판마다 처음부터 (쓰는 협주스킬 수는 note_users에 남는다)
                     self.log("시작", "새 판 1층")
                     return
