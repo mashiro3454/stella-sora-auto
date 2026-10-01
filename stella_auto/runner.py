@@ -840,6 +840,9 @@ class Bot:
                     return
                 if give_up:
                     self.gi.key("esc")
+                else:
+                    self.log("시작", "출발 전인 줄 알았는데 탑 안 필드라서 그대로 이어 감")
+                    return
             elif s == "esc_map":
                 if give_up:
                     self.gi.key("q")
@@ -1013,6 +1016,11 @@ class Bot:
 
     def _play(self, max_floors: int) -> None:
         s = self.det.detect(self.grab()).state
+        for _ in range(60):  # 로딩/화면 전환 중에 켜졌으면 화면이 자리 잡을 때까지 (메뉴로 착각하지 않게)
+            if s not in ("loading", "transition", "unknown"):
+                break
+            time.sleep(0.5)
+            s = self.det.detect(self.grab()).state
         self.log("시작", f"봇 시작, 지금 화면 {s}")
         if s in ("field", "card_select", "enhance_select", "npc_choice", "dialog", "shop", "shop_buy",
                  "esc_map", "notes_gain", "ensemble_up", "tap_continue"):
