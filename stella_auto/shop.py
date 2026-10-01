@@ -188,6 +188,11 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
     for it in full_potions:
         if last_shop or money - it.price >= 1000:
             take(it)
+    if last_shop:
+        # 마지막 상점: 탑이 끝나면 돈은 쓸모없다. 남은 돈으로 소리까지 다 산다 (쓰는 협주스킬이 많은 것부터)
+        rest = [i for i in avail if i not in buy and i.kind == "notes"]
+        for it in sorted(rest, key=lambda i: (-(i.users or 0), i.price)):
+            take(it)
     reroll = (shop_index in (2, 4) and reroll_left > 0 and reroll_price is not None
               and money - reroll_price >= keep)
     reason = f"돈 {gold} -> {money}, 살 것 {len(buy)}개" + (", 리롤" if reroll else "")

@@ -101,3 +101,11 @@ def test_read_ensemble_needs(ocr):
     shop = cv2.imdecode(np.fromfile(str(SCREENS / "shop__live_12.jpg"), np.uint8), cv2.IMREAD_COLOR)
     types = [notes.shop_note_type(shop, i.click[0], i.click[1], i.name) for i in read_shop(shop, ocr) if i.kind == "notes"]
     assert types == [0, 2, 4, 2, 0]
+
+
+def test_last_shop_spends_leftover_on_notes():
+    items = [ShopItem(0, "잠재력 특제 음료", 200, None, False, (0, 0)),
+             ShopItem(1, "바람의 소리x15", 320, 400, False, (0, 0), note_type=8, users=6),
+             ShopItem(2, "집중의 소리x5", 90, None, False, (0, 0), note_type=4, users=1)]
+    plan = plan_purchases(items, 700, shop_index=4, last_shop=True, reroll_left=0, reroll_price=None)
+    assert sorted(i.slot for i in plan.buy) == [0, 1, 2]

@@ -919,11 +919,17 @@ class Bot:
 
     def rename_record(self, name: str) -> bool:
         """기록 화면 연필 → 이름 칸 → 이름 입력 → 확인. 바뀐 이름을 읽어 확인한다."""
-        for attempt in range(2):
-            self.gi.click(*rc.PENCIL)
-            time.sleep(1.2)
-            if "이름" not in self.ocr.text(self.grab(), rc.RENAME_TITLE_BOX).replace(" ", ""):
-                self.log("기록", "이름 변경 창이 안 열림")
+        for attempt in range(3):
+            self.gi.click(*((548, 108) if attempt % 2 == 0 else rc.PENCIL))
+            opened = False
+            for _ in range(6):  # 창이 뜨는 데 시간이 걸릴 수 있다
+                time.sleep(0.5)
+                im = self.grab()
+                if "이름" in self.ocr.text(im, rc.RENAME_TITLE_BOX).replace(" ", "") or                         "이름입력" in self.ocr.text(im, (700, 440, 1220, 600)).replace(" ", ""):
+                    opened = True
+                    break
+            if not opened:
+                self.log("기록", f"이름 변경 창이 안 열림 ({attempt + 1}/3)", im)
                 continue
             self.gi.click(*rc.NAME_FIELD)
             time.sleep(0.6)
@@ -1125,10 +1131,11 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
     thirty = [i for i, s in enumerate(texts) if re.search(r"(?<!\d)30", s) and "획득" in s]
     if hundred and thirty and set(hundred) != set(thirty):
         return (hundred[0], "100원 (6층 이하)") if floor <= 6 else (thirty[0], "30원 (7층 이상)")
+    loss = ("소모", "차감", "소실", "감소", "잃", "변화")  # "랜덤 변화", "HP 30% 소실"도 잃을 수 있는 것
     for i, s in enumerate(texts):
-        if ("획득" in s or "회복" in s) and "소모" not in s and "차감" not in s:
+        if ("획득" in s or "회복" in s) and not any(w in s for w in loss):
             return i, "모름: 잃는 것 없는 쪽 (기록)"
-    if texts and all("소모" in s or "차감" in s for s in texts):
+    if texts and all(any(w in s for w in ("소모", "차감")) for s in texts):
         # 전부 돈/소리를 내는 선택지 (예: 소리 10개를 140원/90원에): 사지 않고 ESC로 나간다
         return -1, "모름: 전부 돈이 들어서 안 고름 (기록)"
     return 0, "모름: 첫 번째 (기록)"
