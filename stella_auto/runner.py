@@ -222,6 +222,16 @@ class Bot:
                             return False, note
         return None, f"아직 모름 (돈 {before} -> {golds})"
 
+    def press_enhance(self, img: np.ndarray) -> None:
+        """"F 강화"가 떠 있을 때 강화머신을 한 번 쓴다."""
+        price = self.next_enhance_price()
+        self.enhance_count += 1
+        self.last_talk_at = time.monotonic()
+        self.log("강화", f"강화머신 {self.enhance_count}번째 ({price}원)", img)
+        self.nav.remember_spot("enhance")
+        self.gi.key("f")
+        time.sleep(1.2)
+
     def verify_gamble(self, gold: int) -> None:
         """650원 결과를 못 읽고 이긴 것으로 이어 간 판: 다음 카드 화면의 돈으로 다시 확인한다.
         (그사이 소리 판매/리롤로 조금 바뀔 수 있어서 넉넉하게 본다. 코인 그림을 숫자로 읽은 앞자리도 떼어 본다)"""
@@ -673,13 +683,7 @@ class Bot:
 
         # 0) 거래의 방 강화머신: 가까이 가면 "F 강화". 180원까지 누른다
         if prompt == "enhance" and now - self.last_talk_at > 2.5 and self.want_enhance(img):
-            price = self.next_enhance_price()
-            self.enhance_count += 1
-            self.last_talk_at = now
-            self.log("강화", f"강화머신 {self.enhance_count}번째 ({price}원)", img)
-            self.nav.remember_spot("enhance")
-            self.gi.key("f")
-            time.sleep(1.2)
+            self.press_enhance(img)
             return None
 
         # 1) "F 대화"가 떠 있으면, 아직 말 안 건 NPC면 말을 건다 (거래의 방에선 상점이 열린다)
@@ -864,8 +868,12 @@ class Bot:
         res = self.nav.walk(lambda im, ch, p: Goal(spot, kind, arrive=60), self.stop_for(prompt), max_sec=20,
                             avoid_exit=True, why=f"{kind} 자리")
         self.log("이동", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
+        found = res.reason == "stopped" and nv.find_prompt(self.grab()) == prompt
         if res.reason == "arrived":
-            self.nudge_until(prompt, first="w" if prompt == "talk" else "s")
+            found = self.nudge_until(prompt, first="w" if prompt == "talk" else "s")
+        if found and prompt == "enhance" and self.want_enhance(self.grab()):
+            # 표시를 찾은 그 자리에서 바로 누른다 (20층: 다음 화면에서 옆의 상점 NPC "대화" 표시가 잡혀 상점부터 갔다)
+            self.press_enhance(self.grab())
         self.npc_scanned = 0.0
         return True
 
