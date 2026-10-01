@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+build/
+dist/
+
+# 실행 중 생기는 파일
+captures/
+logs/
+presets/*.local.json
