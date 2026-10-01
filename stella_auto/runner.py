@@ -845,7 +845,7 @@ class Bot:
                 n = self.nav.map.forget_blocks()
                 self.log("이동", f"출구로 {self.exit_fails}번 못 감: 막힌 칸 {n}개를 지우고 길을 다시 찾음")
             if self.nav.memory_exit is not None and (self.exit_fails >= 6 or
-                                                     (self.exit_fails >= 2 and self.nav.ignored_doors >= 2)):
+                                                     (self.exit_fails >= 2 and self.nav.ignored_doors >= 10)):
                 # 15층: 화면에 진짜 문이 보이는데 믿는 출구 자리와 멀다고 무시하고 70초 헤맸다 (이번 판 위치가 어긋남)
                 self.nav.memory_exit = None
                 self.log("이동", f"기억한 출구로 {self.exit_fails}번 못 감 (무시한 문양 {self.nav.ignored_doors}번): "

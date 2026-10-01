@@ -263,7 +263,7 @@ class Navigator:
         door = nv.find_exit_door(img, char, hue)
         if door and nv.door_matches(door, self.next_kind) and not self._is_false_door(self.odo.to_world(door.center)) \
                 and self._far_from_trusted_exit(self.odo.to_world(door.center)):
-            self.ignored_doors += 1  # 믿는 출구와 먼 문양 (runner가 출구로 못 가는 게 겹치면 기억 대신 이 문을 믿는다)
+            self.ignored_doors += 1  # 믿는 출구와 먼 문양을 본 화면 수 (출구로 못 가는 게 겹치면 기억 대신 이 문을 믿는다)
         if door and nv.door_matches(door, self.next_kind) and not self._is_false_door(self.odo.to_world(door.center)) \
                 and not self._far_from_trusted_exit(self.odo.to_world(door.center)):
             w = self.odo.to_world(door.center)
