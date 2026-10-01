@@ -78,3 +78,11 @@ def test_markers_exit_and_npc():
 ])
 def test_find_prompt(name, kind):
     assert nv.find_prompt(load(name)) == kind
+
+
+def test_prompt_circle_is_not_exit_door():
+    # "F 대화" 표시의 흰 동그라미를 출구 문양으로 착각하던 문제 (8층에서 5분 헤맴)
+    for name in ("field__v3_5.5.jpg", "field__v1_130.2_enhance.jpg"):
+        img = load(name)
+        d = nv.find_exit_door(img, nv.find_character(img))
+        assert d is None or (d.center[0] - 1261) ** 2 + (d.center[1] - 676) ** 2 > 90 ** 2

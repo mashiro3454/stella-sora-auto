@@ -188,8 +188,10 @@ def find_exit_door(img: np.ndarray, char: tuple[float, float] | None = None) -> 
         big, small = max(a, b), min(a, b)
         if not (75 <= big <= 320 and small / big > 0.5):  # 75 미만은 방 제목 글자(ㅇ) 같은 것
             continue
-        if cy > 930 or (cx < 420 and cy < 110) or (cx > 1500 and cy < 200):
-            continue  # HUD 자리 (아래 스킬 버튼, 왼쪽 위 아이콘, 오른쪽 위 돈)
+        if cy > 930 or (cx < 420 and cy < 110) or (cx > 1500 and cy < 200) or (cx > 1450 and cy > 760):
+            continue  # HUD 자리 (아래/오른쪽 아래 스킬 버튼, 왼쪽 위 아이콘, 오른쪽 위 돈)
+        if math.hypot(cx - 1261, cy - 676) < 90:
+            continue  # "F 대화"/"F 강화" 표시의 흰 동그라미 (늘 이 자리에 뜬다)
         # 캐릭터 발밑의 흰 동그라미 (발 위치에서 체력바 쪽으로 조금 아래)
         if char and math.hypot(cx - char[0], cy - char[1] - HP_BAR_TO_FEET / 2) < 150:
             continue
