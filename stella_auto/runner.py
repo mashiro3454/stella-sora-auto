@@ -87,6 +87,7 @@ class Bot:
         self.run = RunState()
         self.nav = Navigator(self.gi, self.grab, lambda kind, msg: self.log(kind, msg))
         self.idle_since: float | None = None  # 출구를 못 찾기 시작한 때
+        self.spots_tried: set = set()  # 이번 층에서 가 본 기억 속 NPC 자리
         self.room = ""  # 이 층 방 종류 (전투/선택/강적/거래/리더)
         self.talked: set[str] = set()  # 이 층에서 말 건 NPC 이름
         self.title_seen = 0.0  # 방 제목을 마지막으로 본 때
@@ -269,6 +270,7 @@ class Bot:
         self.room = room
         self.talked = set()
         self.idle_since = None
+        self.spots_tried: set = set()
         self.log("층", f"{floor}층 {room + '의 방' if room else ''}")
         self.nav.new_room(floor, room, ROOM_BY_FLOOR.get(floor + 1, ""))
 
@@ -458,6 +460,7 @@ class Bot:
             self.enhance_count += 1
             self.last_talk_at = now
             self.log("강화", f"강화머신 {self.enhance_count}번째 ({price}원)", img)
+            self.nav.remember_spot("enhance")
             self.gi.key("f")
             time.sleep(1.2)
             return None
@@ -473,7 +476,11 @@ class Bot:
                 self.gi.key("f")
                 time.sleep(1.0)
                 after = self.grab()
-                if self.det.detect(after).state == "field":
+                after_state = self.det.detect(after).state
+                if after_state != "field":
+                    self.nav.remember_spot("shop" if after_state in ("shop", "shop_buy") or
+                                           (self.room == "거래" and self.want_enhance(after) is False) else "npc")
+                if after_state == "field":
                     self.log("NPC", f"{name}: 대화가 안 열림 (이미 끝난 이벤트일 수 있음)")
                     # 이름을 다르게 읽어("베아틔원"/"베아트리스") 같은 NPC에게 또 가지 않게, 근처 이름표를 다 말 건 것으로
                     for other, (bx, by, bw, bh), _ in self.npc_labels(after):
@@ -527,6 +534,8 @@ class Bot:
                 # 다음 루프에서 이름표부터 다시 찾고, 둘러보기는 두 번에 한 번만 (근처에서 멀어지지 않게)
                 self.npc_scanned = 0.0
                 self.trade_tick += 1
+                if self.go_spot("enhance" if self.want_enhance(img) else "shop"):
+                    return None
                 if self.trade_tick % 2 == 0:
                     self._explore("강화머신/상점을 찾으려고 둘러봄", avoid_exit=True)
                 else:
@@ -547,6 +556,8 @@ class Bot:
 
         # 3) 선택의 방은 NPC와 이야기하기 전엔 나가지 않는다
         if self.room == "선택" and not self.talked and now - self.floor_changed_at < CHOICE_SEARCH:
+            if self.go_spot("npc"):
+                return None
             self._explore("선택의 방 NPC를 찾으려고 둘러봄", avoid_exit=True)
             return None
 
@@ -580,6 +591,22 @@ class Bot:
         return None
 
     # -- 걷기 도우미 -------------------------------------------------------------
+    def go_spot(self, kind: str) -> bool:
+        """이 지도에서 전에 말을 걸었던 자리(kind)로 간다. 이번 층에서 아직 안 가 본 자리가 없으면 False."""
+        pos = self.nav.last_pos
+        todo = [p for p in self.nav.spots(kind) if (kind, round(p[0]), round(p[1])) not in self.spots_tried]
+        if not todo or pos is None:
+            return False
+        spot = min(todo, key=lambda p: math.hypot(p[0] - pos[0], p[1] - pos[1]))
+        self.spots_tried.add((kind, round(spot[0]), round(spot[1])))
+        prompt = "enhance" if kind == "enhance" else "talk"
+        self.log("이동", f"기억해 둔 {kind} 자리로 감 ({spot[0]:.0f}, {spot[1]:.0f})")
+        res = self.nav.walk(lambda im, ch, p: Goal(spot, kind, arrive=60), self.stop_for(prompt), max_sec=20,
+                            avoid_exit=True, why=f"{kind} 자리")
+        self.log("이동", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
+        self.npc_scanned = 0.0
+        return True
+
     def stop_for(self, prompt: str):
         """걷다가 멈출 때: 필드가 아니게 됐거나 원하는 상호작용 표시("talk"/"enhance")가 떴을 때."""
         return lambda im: self.walk_stop(im) or nv.find_prompt(im) == prompt
@@ -819,6 +846,8 @@ class Bot:
             if m:
                 self.new_floor(int(m.group(1)), next((r for r in ROOM_NAMES if r in text), ""))
                 self.joined_midway = True  # 이 층 전투가 이미 끝났을 수 있다
+                # 1~2층이면 판 시작이나 다름없다: 650원 도박/리롤 규칙을 그대로 쓴다 (빠진 잠재는 한두 장)
+                self.run_tracked = self.run.floor <= 2
                 self.nav.new_room(self.run.floor, self.room, ROOM_BY_FLOOR.get(self.run.floor + 1, ""), at_entrance=False)
                 return
         # 못 읽으면 계속 ESC를 누르지 않게 일단 넘어가고, 다음 방 제목의 층 번호를 그대로 믿는다

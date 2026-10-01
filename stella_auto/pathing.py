@@ -264,6 +264,18 @@ class Navigator:
             return Goal(self.marker_goal, "marker")
         return None
 
+    # -- 기억해 둔 NPC 자리 -------------------------------------------------------
+    def remember_spot(self, kind: str) -> None:
+        """지금 선 자리를 이 지도의 NPC/상점/강화머신 자리로 기억 (말을 걸었을 때)."""
+        if self.room is not None and self.last_pos is not None:
+            if self.memory.add_spot(self.room, self.last_pos, kind):
+                self.log("지도", f"{self.room.id}에 {kind} 자리 기억 ({self.last_pos[0]:.0f}, {self.last_pos[1]:.0f})")
+
+    def spots(self, kind: str) -> list[tuple[float, float]]:
+        if self.room is None:
+            return []
+        return [(float(x), float(y)) for x, y, k in self.room.npcs if k == kind]
+
     def known_exit(self) -> tuple[float, float] | None:
         return self.door_seen or self.memory_exit
 

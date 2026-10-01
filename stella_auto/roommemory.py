@@ -35,7 +35,7 @@ class Room:
     visits: int = 0
     exit: list[float] | None = None  # 출구 월드 좌표 (나간 자리들의 평균)
     exit_count: int = 0
-    npcs: list[list] = field(default_factory=list)  # [x, y, 이름]
+    npcs: list[list] = field(default_factory=list)  # [x, y, 종류] 말을 건 자리 (종류: npc, shop, enhance)
     nav: dict = field(default_factory=dict)  # NavMap.to_json()
     updated: str = ""
 
@@ -105,6 +105,16 @@ class RoomMemory:
         r.nav = nav.to_json()  # 이번 지도는 기억에서 꺼낸 지도에 이어 그린 것이라 그대로 저장
         r.updated = time.strftime("%Y-%m-%d %H:%M:%S")
         self.save()
+
+    def add_spot(self, r: Room, pos: tuple[float, float], kind: str) -> bool:
+        """NPC/상점/강화머신 앞에 섰던 자리. 같은 지도에서 NPC는 바뀌어도 서 있는 자리는 같다
+        (16층 베아트리스, 2층 포셔가 같은 지도 같은 자리). 가까운 자리가 이미 있으면 안 넣는다."""
+        for x, y, k in r.npcs:
+            if k == kind and math.hypot(pos[0] - x, pos[1] - y) < 200:
+                return False
+        r.npcs.append([round(pos[0]), round(pos[1]), kind])
+        self.save()
+        return True
 
     def save(self) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
