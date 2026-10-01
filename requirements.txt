@@ -1,2 +1,10 @@
 numpy
 opencv-python
+rapidfuzz
+winrt-runtime
+winrt-Windows.Media.Ocr
+winrt-Windows.Globalization
+winrt-Windows.Graphics.Imaging
+winrt-Windows.Storage.Streams
+winrt-Windows.Foundation
+winrt-Windows.Foundation.Collections
