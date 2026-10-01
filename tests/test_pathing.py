@@ -234,3 +234,15 @@ def test_record_name_format():
     t = _t.mktime((2026, 10, 2, 1, 58, 0, 0, 0, -1))
     assert rc.record_name(t) == "1002_0158"
     assert rc.is_bot_record_name("1002_0158") and not rc.is_bot_record_name("이름 없는 기록")
+
+
+def test_trusted_exit_not_overwritten_by_one_drifted_exit(tmp_path):
+    mem = RoomMemory(tmp_path)
+    r = mem.add("거래", 5, load("odo/walk13_036.jpg"))
+    for _ in range(3):
+        mem.record(r, 5, NavMap(), (-136.0, 52.0))
+    assert r.exit == [-136, 52] and r.exit_count == 3
+    mem.record(r, 12, NavMap(), (-181.0, -471.0))  # 한 번 크게 다른 자리: 무시
+    assert r.exit == [-136, 52]
+    mem.record(r, 19, NavMap(), (-180.0, -470.0))  # 두 번 연속이면 새 자리를 믿는다
+    assert r.exit == [-180, -470] and r.exit_count == 1
