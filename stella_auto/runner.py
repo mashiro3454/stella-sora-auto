@@ -89,6 +89,7 @@ class Bot:
         self.nav = Navigator(self.gi, self.grab, lambda kind, msg: self.log(kind, msg))
         self.idle_since: float | None = None  # 출구를 못 찾기 시작한 때
         self.spots_tried: set = set()  # 이번 층에서 가 본 기억 속 NPC 자리
+        self.npc_marker_rest_until = 0.0
         self.room = ""  # 이 층 방 종류 (전투/선택/강적/거래/리더)
         self.talked: set[str] = set()  # 이 층에서 말 건 NPC 이름
         self.title_seen = 0.0  # 방 제목을 마지막으로 본 때
@@ -648,7 +649,7 @@ class Bot:
                 return None
 
         # 2-1) 화면 밖 NPC는 물음표 상자 표시를 따라간다 (전투가 끝나야 NPC가 생기는 방도 있다)
-        if self.combat_done and not self.talked:
+        if self.combat_done and not self.talked and now > self.npc_marker_rest_until:
             npc = next((m for m in nv.find_markers(img, char) if m.kind == "npc"), None)
             if npc:
                 self.log("NPC", "물음표 표시를 따라감", img)
@@ -656,6 +657,9 @@ class Bot:
                                     avoid_exit=True, why="NPC 표시")
                 self.log("NPC", f"표시 따라가기 결과 {res.reason} ({res.secs:.0f}초)")
                 self.npc_scanned = 0.0  # NPC가 화면에 들어왔을 테니 바로 이름표를 찾는다
+                if res.reason in ("near_exit", "no_path", "no_progress"):
+                    # 출구 옆이라 못 가면 잠깐 쉰다 (3층: 1초에 두 번씩 따라가기→멈춤만 반복했다)
+                    self.npc_marker_rest_until = time.monotonic() + 15
                 return None
 
         # 2-1-1) 거래의 방은 강화머신과 상점이 끝나야 나간다
