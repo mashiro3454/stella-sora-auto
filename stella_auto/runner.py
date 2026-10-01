@@ -45,7 +45,8 @@ TAP_STATES = {"notes_gain", "ensemble_up", "tap_continue", "explore_done"}
 EMPTY_SPOT = (1300, 1045)  # "빈 곳을 터치" 화면에서 누를 곳. 가운데는 목록, 오른쪽 아래는 기록 화면의 "기록 저장" 자리라 피한다
 GAMBLE_LAST_FLOOR = 3  # 650원 도박은 1~3층에서만 나온다
 TITLE_BOX = (600, 40, 1320, 230)  # 방에 들어가면 잠깐 뜨는 "선택의 방 / 2/20층"
-TITLE_FLOOR_RE = re.compile(r"(\d+)\s*/\s*20")
+# "14/20층". OCR이 "/"를 "1"로 읽기도 한다 ("14120층")
+TITLE_FLOOR_RE = re.compile(r"(\d{1,2})\s*[/1lI|]\s*20\s*층|(\d{1,2})\s*/\s*20")
 ROOM_NAMES = ("전투", "선택", "강적", "거래", "리더")
 HUD_TEXT = ("기록점수", "점수", "자동전투", "전투중", "레벨", "레멜", "레텔", "간단히", "대화", "코인", "소리")
 NPC_SCAN_EVERY = 2.5  # 초. 이름표 찾기(OCR 전체 화면)는 무거워서 가끔만
@@ -283,7 +284,7 @@ class Bot:
         idx, rule = choose_option(pairs, self.run.floor, question)
         if idx < 0 and self._declined == question:
             # ESC로 안 닫히는 선택지: 가장 싼 쪽 (첫 번째 숫자가 가장 작은 것)
-            costs = [int(m.group(1)) if (m := re.search(r"(\d+)\s*소모", t + e)) else 10 ** 6 for t, e in pairs]
+            costs = [int(m.group(1) or m.group(2)) if (m := re.search(r"(\d+)\s*소모", t + e)) else 10 ** 6 for t, e in pairs]
             idx, rule = costs.index(min(costs)), "모름: ESC로 안 닫혀서 가장 싼 쪽 (기록)"
         gold_before = self.read_gold(img)
         self.log("선택지", f"{question} -> [{idx}] '{options[idx].text if idx >= 0 else 'ESC'}' ({rule})", img,
@@ -330,6 +331,7 @@ class Bot:
         self.trade_tick = 0
         self.floor_changed_at = time.monotonic()
         self.loading_at = None
+        restore = self.floor_uncertain
         if self.floor_uncertain and floor <= GAMBLE_LAST_FLOOR:
             self.run_tracked = True  # 층을 몰랐다가 1~3층으로 밝혀짐: 650원 도박 규칙을 다시 쓴다
         self.run.floor = floor
@@ -342,6 +344,8 @@ class Bot:
         self.idle_since = None
         self.spots_tried: set = set()
         self.log("층", f"{floor}층 {room + '의 방' if room else ''}")
+        if restore:
+            self.restore_state(floor)  # 층을 몰랐다가 제목으로 알게 됨: 저장해 둔 같은 판이면 이어받는다
         if self.run_tracked:
             self.save_state()
         self.nav.new_room(floor, room, ROOM_BY_FLOOR.get(floor + 1, ""))
@@ -357,7 +361,7 @@ class Bot:
             t = line.text.replace(" ", "")
             m = TITLE_FLOOR_RE.search(t)
             if m:
-                floor = int(m.group(1))
+                floor = int(m.group(1) or m.group(2))
             room = room or next((r for r in ROOM_NAMES if r in t), "")
         if floor is None:
             # "N/20층" 줄이 먼저 사라져도 "선택의 방" 같은 방 이름은 조금 더 남는다
@@ -1045,7 +1049,7 @@ class Bot:
             self.gi.key("esc")
             time.sleep(0.6)
             if m:
-                self.new_floor(int(m.group(1)), next((r for r in ROOM_NAMES if r in text), ""))
+                self.new_floor(int(m.group(1) or m.group(2)), next((r for r in ROOM_NAMES if r in text), ""))
                 self.joined_midway = True  # 이 층 전투가 이미 끝났을 수 있다
                 # 1~2층이면 판 시작이나 다름없다: 650원 도박/리롤 규칙을 그대로 쓴다 (빠진 잠재는 한두 장)
                 self.run_tracked = self.run.floor <= 2
