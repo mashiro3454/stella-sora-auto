@@ -58,12 +58,12 @@ ANCHORS: tuple[Anchor, ...] = (
     Anchor("popup_buy", (488, 266, 612, 306), group="popup", threshold=0.85, search=POPUP_AREA),
     Anchor("popup_filter", (312, 156, 456, 202), group="popup", threshold=0.85, search=POPUP_AREA),
     # 그 밖에 화면마다 하나뿐인 것
-    Anchor("esc_giveup", (44, 954, 312, 1026)),  # ESC 지도의 빨간 "포기" 버튼
+    Anchor("esc_giveup", (44, 934, 312, 1008)),  # ESC 지도의 빨간 "포기" 버튼
     Anchor("notes_banner", (760, 40, 1180, 100), group="banner"),  # "소리 획득!"
     Anchor("ensemble_banner", (760, 40, 1180, 100), group="banner"),  # "협주 스킬 활성화!"
     Anchor("explore_done", (740, 260, 1180, 380)),  # "탐색 완료"
     # "빈 곳을 터치하여 계속하세요". 소리 획득, 탐색 완료 등에서 위아래로 조금씩 다른 자리에 뜬다
-    Anchor("touch_continue", (766, 960, 1154, 998), search=(700, 930, 1220, 1040)),
+    Anchor("touch_continue", (766, 960, 1154, 998), search=(700, 820, 1220, 1040)),
     Anchor("btn_save_record", (1540, 936, 1872, 1026)),  # 기록 화면 "기록 저장"
     Anchor("enhance_banner", (600, 40, 1320, 100)),  # "잠재력 카드 1장을 선택해 강화하세요!"
     # "60 소모, 잠재력 강화 성공"에서 숫자 뒷부분. 숫자 자릿수에 따라 좌우로 밀린다

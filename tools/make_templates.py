@@ -37,7 +37,7 @@ SOURCES = {
     "popup_notice": "notice__v3_12.jpg",
     "popup_buy": "shop_buy__v1_325.jpg",
     "popup_filter": "filter__v3_33.jpg",
-    "esc_giveup": "esc_map__v3_7.jpg",
+    "esc_giveup": "esc_map__live.jpg",
     "notes_banner": "notes_gain__v1_75.jpg",
     "explore_done": "explore_done__v3_9.5.jpg",
     "btn_save_record": "record_result__v1_595.jpg",
@@ -45,6 +45,12 @@ SOURCES = {
     "enhance_done": "enhance_select__v1_135.jpg",
     "ensemble_banner": "ensemble_up__v1_388.jpg",
     "touch_continue": "notes_gain__v1_75.jpg",
+}
+
+
+# 화면 판정(ANCHORS)에는 안 쓰고 필드에서 따로 찾는 조각: 이름 -> (샘플 화면, 자를 자리)
+EXTRA = {
+    "prompt_talk": ("field__v3_5.5.jpg", (1220, 636, 1302, 728)),  # NPC 근처의 "F 대화"
 }
 
 
@@ -56,7 +62,7 @@ def read(path: Path) -> np.ndarray:
 
 
 def make(anchor: str, image: Path) -> Path:
-    x0, y0, x1, y1 = ANCHOR_BY_NAME[anchor].box
+    x0, y0, x1, y1 = ANCHOR_BY_NAME[anchor].box if anchor in ANCHOR_BY_NAME else EXTRA[anchor][1]
     crop = cv2.cvtColor(read(image)[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
     TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
     out = TEMPLATE_DIR / f"{anchor}.png"
@@ -77,6 +83,8 @@ def main(argv: list[str]) -> int:
         return 1
     for anchor, src in SOURCES.items():
         print(make(anchor, SAMPLES / src).name, "<-", src)
+    for name, (src, _) in EXTRA.items():
+        print(make(name, SAMPLES / src).name, "<-", src)
     return 0
 
 
