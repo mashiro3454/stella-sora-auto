@@ -60,3 +60,13 @@ def test_walk_toward_detours_when_blocked():
     res = nv.walk_toward(lambda k, s: held.append(k), lambda: img, lambda im, ch: (400, 200), max_steps=12)
     assert res.reason == "steps"
     assert ("s", "a") in held or ("w", "d") in held  # 목표(왼쪽 위)에서 90도 꺾은 방향
+
+
+def test_markers_exit_and_npc():
+    # 사용자 스크린샷 조각: 왼쪽 문 아이콘(출구), 오른쪽 물음표 상자(NPC)
+    crop = cv2.imdecode(np.fromfile(str(SCREENS / "markers_crop.png"), np.uint8), cv2.IMREAD_COLOR)
+    canvas = np.full((1080, 1920, 3), 120, np.uint8)
+    canvas[300:300 + crop.shape[0], 800:800 + crop.shape[1]] = crop
+    kinds = sorted((m.icon[0], m.kind) for m in nv.find_markers(canvas, None))
+    assert [k for _, k in kinds] == ["exit", "npc"]
+    assert all(m.direction is not None for m in nv.find_markers(canvas, None))

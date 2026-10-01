@@ -63,8 +63,42 @@ class ExitMarker:
     direction: tuple[float, float] | None  # 삼각형이 가리키는 방향 (없으면 None)
 
 
-def find_exit_marker(img: np.ndarray, char: tuple[float, float] | None) -> ExitMarker | None:
-    """화면 가장자리의 출구 표시 (청록색 문 아이콘 + 삼각형)."""
+@dataclass
+class Marker:
+    kind: str  # "exit" (문 아이콘) 또는 "npc" (물음표 상자 아이콘)
+    icon: tuple[float, float]
+    direction: tuple[float, float] | None  # 삼각형이 가리키는 방향 (없으면 None)
+
+
+_MARKER_TEMPLATES: dict[str, np.ndarray] = {}
+
+
+def _marker_templates() -> dict[str, np.ndarray]:
+    if not _MARKER_TEMPLATES:
+        from .screen import TEMPLATE_DIR
+
+        for kind in ("exit", "npc"):
+            path = TEMPLATE_DIR / f"marker_{kind}.png"
+            _MARKER_TEMPLATES[kind] = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_GRAYSCALE)
+    return _MARKER_TEMPLATES
+
+
+def _classify_marker(gray: np.ndarray, box: tuple[int, int, int, int]) -> str:
+    """청록 아이콘이 출구(문)인지 NPC(물음표 상자)인지. 템플릿이 애매하면 가로세로 비율로 (문이 더 길쭉)."""
+    x, y, w, h = box
+    cx, cy = x + w // 2, y + h // 2
+    region = gray[max(0, cy - 40):cy + 40, max(0, cx - 40):cx + 40]
+    scores = {}
+    for kind, t in _marker_templates().items():
+        if region.shape[0] >= t.shape[0] and region.shape[1] >= t.shape[1]:
+            scores[kind] = float(cv2.matchTemplate(region, t, cv2.TM_CCOEFF_NORMED).max())
+    if scores and max(scores.values()) >= 0.45 and abs(scores.get("exit", 0) - scores.get("npc", 0)) > 0.08:
+        return max(scores, key=scores.get)
+    return "exit" if w / max(h, 1) < 0.9 else "npc"
+
+
+def find_markers(img: np.ndarray, char: tuple[float, float] | None) -> list[Marker]:
+    """화면 가장자리의 청록 표시들: 출구(문 아이콘)와 NPC(물음표 상자) + 각자 방향 삼각형."""
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     mask = ((hsv[..., 0] > 80) & (hsv[..., 0] < 100) & (hsv[..., 1] > 150) & (hsv[..., 2] > 150)).astype(np.uint8)
     mask[:110, :420] = 0  # 왼쪽 위 HUD
@@ -74,21 +108,47 @@ def find_exit_marker(img: np.ndarray, char: tuple[float, float] | None) -> ExitM
     blobs = [(int(st[i][4]), cen[i], st[i]) for i in range(1, n) if st[i][4] > 60]
     if char:  # 캐릭터 발밑의 방향 화살표도 청록색이라 뺀다
         blobs = [b for b in blobs if math.hypot(b[1][0] - char[0], b[1][1] - char[1] - HP_BAR_TO_FEET) > 130]
-    icons = [b for b in blobs if 25 <= b[2][3] <= 60 and 20 <= b[2][2] <= 50]
+    icons = [b for b in blobs if 25 <= b[2][3] <= 60 and 20 <= b[2][2] <= 55]
     if not icons:
-        return None
-    icon = max(icons, key=lambda b: b[0])
-    ix, iy, iw, ih = icon[2][:4]
+        return []
 
-    def inside_icon(c: np.ndarray) -> bool:  # 문 아이콘은 여러 조각으로 쪼개져 잡힌다
-        return ix - 2 <= c[0] <= ix + iw + 2 and iy - 2 <= c[1] <= iy + ih + 2
+    def inside(c: np.ndarray, b) -> bool:  # 문 아이콘은 여러 조각으로 쪼개져 잡힌다
+        x, y, w, h = b[2][:4]
+        return x - 2 <= c[0] <= x + w + 2 and y - 2 <= c[1] <= y + h + 2
 
-    near = [b for b in blobs if b is not icon and not inside_icon(b[1]) and math.hypot(*(b[1] - icon[1])) < 60]
-    if near:
-        tri = min(near, key=lambda b: math.hypot(*(b[1] - icon[1])))
-        d = tri[1] - icon[1]
-        return ExitMarker((float(icon[1][0]), float(icon[1][1])), (float(d[0]), float(d[1])))
-    return ExitMarker((float(icon[1][0]), float(icon[1][1])), None)
+    triangles = [b for b in blobs if b not in icons and not any(inside(b[1], i) for i in icons)]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    out = []
+    for icon in icons:
+        # 삼각형은 가장 가까운 아이콘 하나에만 붙인다 (아이콘 두 개가 나란히 있을 때)
+        mine = [t for t in triangles if math.hypot(*(t[1] - icon[1])) < 60
+                and min(icons, key=lambda i: math.hypot(*(t[1] - i[1]))) is icon]
+        direction = None
+        if mine:
+            tri = min(mine, key=lambda t: math.hypot(*(t[1] - icon[1])))
+            d = tri[1] - icon[1]
+            direction = (float(d[0]), float(d[1]))
+        kind = _classify_marker(gray, tuple(int(v) for v in icon[2][:4]))
+        out.append(Marker(kind, (float(icon[1][0]), float(icon[1][1])), direction))
+    return out
+
+
+# 예전 이름 (출구 표시만)
+ExitMarker = Marker
+
+
+def find_exit_marker(img: np.ndarray, char: tuple[float, float] | None) -> Marker | None:
+    exits = [m for m in find_markers(img, char) if m.kind == "exit"]
+    return exits[0] if exits else None
+
+
+def marker_target(marker: Marker, char: tuple[float, float]) -> tuple[float, float]:
+    """표시 쪽으로 가려면 향할 화면 좌표 (삼각형이 있으면 그 방향으로 멀리)."""
+    if marker.direction is not None:
+        dx, dy = marker.direction
+        norm = math.hypot(dx, dy) or 1
+        return char[0] + dx / norm * 600, char[1] + dy / norm * 600
+    return marker.icon
 
 
 @dataclass
@@ -158,13 +218,7 @@ def exit_target(img: np.ndarray, char: tuple[float, float]) -> tuple[float, floa
     if door:
         return door.center
     marker = find_exit_marker(img, char)
-    if marker is None:
-        return None
-    if marker.direction is not None:  # 삼각형 방향으로 멀리
-        dx, dy = marker.direction
-        norm = math.hypot(dx, dy) or 1
-        return char[0] + dx / norm * 600, char[1] + dy / norm * 600
-    return marker.icon
+    return marker_target(marker, char) if marker else None
 
 
 _TALK_TEMPLATE: np.ndarray | None = None

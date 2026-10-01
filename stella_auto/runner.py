@@ -46,7 +46,15 @@ HUD_TEXT = ("기록점수", "점수", "자동전투", "전투중", "레벨", "�
 NPC_SCAN_EVERY = 2.5  # 초. 이름표 찾기(OCR 전체 화면)는 무거워서 가끔만
 TALK_COOLDOWN = 8.0  # 대화가 끝나도 "F 대화"가 한동안 남아 있어서, 말 건 뒤 이만큼은 다시 안 건다
 GAMBLE_EXIT_WAIT = 8.0  # 3층: 출구가 보여도 전투 뒤 NPC가 나올 수 있어서 이만큼 더 둘러본다
-GAMBLE_FLOOR_MIN = 45.0  # 3층: 들어온 뒤 최소 이만큼은 있어야 전투가 끝나고 NPC가 나올 시간이 된다
+COMBAT_TIMEOUT = 150.0  # 전투방에서 "소리 획득"을 이만큼 못 보면 전투 끝을 놓친 것으로 보고 진행
+# 층 구성 (사용자 설명): 1~6 전투/선택/전투/강적/거래/리더, 7~13 전투/강적/선택/전투/강적/거래/리더,
+# 14~20 같은 구성. 전투가 있는 방은 "소리 획득"(전투 끝 보상)을 본 뒤에 나간다
+ROOM_BY_FLOOR = {
+    1: "전투", 2: "선택", 3: "전투", 4: "강적", 5: "거래", 6: "리더",
+    7: "전투", 8: "강적", 9: "선택", 10: "전투", 11: "강적", 12: "거래", 13: "리더",
+    14: "전투", 15: "강적", 16: "선택", 17: "전투", 18: "강적", 19: "거래", 20: "리더",
+}
+COMBAT_ROOMS = {"전투", "강적", "리더"}
 
 # 메뉴 버튼 (게임 화면 1920x1080 기준, 실험으로 확인)
 BTN_DEPART = (1706, 978)  # 난이도 선택 "출발" (바로 왼쪽 "빠른 전투"는 절대 누르지 않는다)
@@ -85,6 +93,7 @@ class Bot:
         self.last_talk_at = 0.0
         self.exit_seen_at: float | None = None  # 이 층에서 출구를 처음 본 때
         self.floor_known = False  # 봇을 탑 중간에서 켜면 처음엔 몇 층인지 모른다
+        self.combat_done = True  # 이 층 전투가 끝났는지 ("소리 획득"을 봤는지)
         self.gamble_won = False
         self.restart_pending = ""
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -212,6 +221,8 @@ class Bot:
         return st != "field" or (talk and nv.find_talk_prompt(im) is not None)
 
     def new_floor(self, floor: int, room: str) -> None:
+        room = room or ROOM_BY_FLOOR.get(floor, "")
+        self.combat_done = room not in COMBAT_ROOMS
         self.floor_changed_at = time.monotonic()
         self.loading_at = None
         self.run.floor = floor
@@ -357,6 +368,29 @@ class Bot:
                     self.talked.add(name)  # 못 가면 이 NPC는 포기 (무한 반복 방지)
                 return None
 
+        # 2-1) 화면 밖 NPC는 물음표 상자 표시를 따라간다 (전투가 끝나야 NPC가 생기는 방도 있다)
+        if self.combat_done and not self.talked:
+            npc = next((m for m in nv.find_markers(img, char) if m.kind == "npc"), None)
+            if npc:
+                self.log("NPC", "물음표 표시를 따라감", img)
+                res = nv.walk_toward(
+                    lambda k, sec: self.gi.hold(list(k), sec), self.grab,
+                    lambda im, ch: (lambda m: nv.marker_target(m, ch) if m else None)(
+                        next((m for m in nv.find_markers(im, ch) if m.kind == "npc"), None)),
+                    stop=lambda im: self.walk_stop(im, talk=True), arrive_dist=0, max_steps=25,
+                    initial_angle=nv.angle_of(*(np.subtract(nv.marker_target(npc, char), char))))
+                self.log("NPC", f"표시 따라가기 결과 {res.reason} ({res.steps}걸음)")
+                self.npc_scanned = 0.0  # NPC가 화면에 들어왔을 테니 바로 이름표를 찾는다
+                return None
+
+        # 2-2) 전투방은 전투가 끝나야("소리 획득") 나간다. 출구는 전투 중에도 보인다
+        if not self.combat_done:
+            if now - self.floor_changed_at < COMBAT_TIMEOUT:
+                time.sleep(0.4)
+                return None
+            self.combat_done = True
+            self.log("전투", f"{COMBAT_TIMEOUT:.0f}초 동안 소리 획득을 못 봄, 전투가 끝난 것으로 보고 진행", img)
+
         # 3) 선택의 방은 NPC와 이야기하기 전엔 나가지 않는다
         if self.room == "선택" and not self.talked:
             self._explore("선택의 방 NPC를 찾으려고 둘러봄")
@@ -387,8 +421,7 @@ class Bot:
             self.exit_seen_at = now
         if not self.gamble_won and self.run.floor >= GAMBLE_LAST_FLOOR:
             # 3층에서도 650원 NPC가 나올 수 있다. 출구가 보인 뒤에도 잠깐 NPC를 더 찾고 나서 판단한다
-            if self.run.floor == GAMBLE_LAST_FLOOR and (now - self.exit_seen_at < GAMBLE_EXIT_WAIT
-                                                        or now - self.floor_changed_at < GAMBLE_FLOOR_MIN):
+            if self.run.floor == GAMBLE_LAST_FLOOR and now - self.exit_seen_at < GAMBLE_EXIT_WAIT:
                 time.sleep(0.5)
                 return None
             self.restart_pending = f"{GAMBLE_LAST_FLOOR}층까지 650원 선택지를 못 받음"
@@ -442,6 +475,9 @@ class Bot:
                 self.gi.key("space")
                 time.sleep(0.5)
             elif s in TAP_STATES:
+                if s == "notes_gain" and not self.combat_done:
+                    self.combat_done = True
+                    self.log("전투", "소리 획득 -> 전투 끝")
                 self.gi.click(*EMPTY_SPOT)
                 time.sleep(0.7)
             elif s in ("shop", "shop_buy"):
