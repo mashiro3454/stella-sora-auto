@@ -121,3 +121,12 @@ def test_lobby_screens_lead_back_to_tower():
         img = cv2.imdecode(np.fromfile(str(d / f"{name}.jpg"), np.uint8), cv2.IMREAD_COLOR)
         t = "".join(l.text for l in ocr.read(img, (0, 0, 1920, 1080), scale=1.0)).replace(" ", "")
         assert lobby_action(t) == want, (name, t)
+
+
+def test_free_notes_tie_goes_to_fewer_owned():
+    # 강공과 필살기 둘 다 협주 3개: 덜 가진 필살기 (16층에서 강공 29개인데 강공을 골랐다)
+    users = {8: 6, 6: 3, 0: 3, 1: 2, 4: 1}
+    opts = [("난 이것들뿐이야.", "강공의 소리4 5개 획득"), ("난이7것들뿐이야.", "필살기의 소리土 5개 획득"),
+            ("난 전부 잘 들어.", "랜덤 소리 5개 획득")]
+    assert choose_option(opts, 16, note_users=users, note_have={0: 29, 6: 14})[0] == 1
+    assert choose_option(opts, 16, note_users=users)[0] == 0  # 가진 개수를 모르면 앞의 것

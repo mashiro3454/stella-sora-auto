@@ -294,7 +294,8 @@ class Bot:
             time.sleep(0.5)
             return
         self._quiz_waits = 0
-        idx, rule = choose_option(pairs, self.run.floor, question, note_users=self.note_users)
+        idx, rule = choose_option(pairs, self.run.floor, question, note_users=self.note_users,
+                                  note_have=self.note_needs.have if self.note_needs else None)
         if idx < 0 and self._declined == question:
             # ESC로 안 닫히는 선택지: 가장 싼 쪽 (첫 번째 숫자가 가장 작은 것)
             costs = [int(m.group(1) or m.group(2)) if (m := re.search(r"(\d+)\s*소모", t + e)) else 10 ** 6 for t, e in pairs]
@@ -967,6 +968,7 @@ class Bot:
                     self.run_tracked = True
                     self.new_floor(1, "전투")
                     self.gamble_won = False
+                    self.note_needs = None  # 가진 소리 개수는 판마다 처음부터 (쓰는 협주스킬 수는 note_users에 남는다)
                     self.log("시작", "새 판 1층")
                     return
                 if give_up:
@@ -1301,9 +1303,10 @@ def quiz_answer(question: str, options: list[tuple[str, str]]) -> int | None:
 
 
 def choose_option(options: list[tuple[str, str]], floor: int, question: str = "",
-                  note_users: dict[int, int] | None = None) -> tuple[int, str]:
+                  note_users: dict[int, int] | None = None,
+                  note_have: dict[int, int] | None = None) -> tuple[int, str]:
     """NPC 선택지 고르기 (docs/tower-rules.md "NPC 선택지 고르기"). (번호, 규칙 이름).
-    note_users: 소리 종류 -> 그 소리를 쓰는 협주스킬 수 (공짜 소리 고르기에 씀)."""
+    note_users: 소리 종류 -> 그 소리를 쓰는 협주스킬 수, note_have: 가진 개수 (공짜 소리 고르기에 씀)."""
     q = quiz_answer(question, options)
     if q is not None:
         return q, "퀴즈 정답지"
@@ -1331,7 +1334,7 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
     if hundred and thirty and set(hundred) != set(thirty):
         return (hundred[0], "100원 (6층 이하)") if floor <= 6 else (thirty[0], "30원 (7층 이상)")
     loss = ("소모", "차감", "소실", "감소", "잃", "변화")  # "랜덤 변화", "HP 30% 소실"도 잃을 수 있는 것
-    pick = free_note_choice(texts, note_users, loss)
+    pick = free_note_choice(texts, note_users, loss, note_have)
     if pick is not None:
         return pick
     for i, s in enumerate(texts):
@@ -1364,10 +1367,11 @@ def lobby_action(t: str) -> str | None:
 
 
 def free_note_choice(texts: list[str], note_users: dict[int, int] | None,
-                     loss: tuple[str, ...]) -> tuple[int, str] | None:
+                     loss: tuple[str, ...], note_have: dict[int, int] | None = None) -> tuple[int, str] | None:
     """보기가 전부 공짜 소리 ("강공의 소리 5개 획득 / 행운의 소리 5개 획득 / 랜덤 소리 5개 획득"):
-    우리 협주스킬이 가장 많이 쓰는 소리, 쓰는 소리가 없으면 랜덤 (시험, 2026-10-02 밤).
+    우리 협주스킬이 가장 많이 쓰는 소리, 같으면 덜 가진 소리, 쓰는 소리가 없으면 랜덤 (시험, 2026-10-02 밤).
     전엔 첫 번째를 골라서 안 쓰는 폭발의 소리를 받았다."""
+    have = note_have or {}
     if not note_users or len(texts) < 2:
         return None
     kinds: list[tuple[int, int | None, bool]] = []
@@ -1375,9 +1379,9 @@ def free_note_choice(texts: list[str], note_users: dict[int, int] | None,
         if "소리" not in s or "획득" not in s or any(w in s for w in loss):
             return None
         kinds.append((i, type_from_name(s), "랜덤" in s))
-    named = [(note_users.get(t, 0), -i, i) for i, t, rnd in kinds if t is not None and not rnd]
+    named = [(note_users.get(t, 0), -have.get(t, 0), -i, i) for i, t, rnd in kinds if t is not None and not rnd]
     if named and max(named)[0] > 0:
-        n, _, i = max(named)
+        n, _, _, i = max(named)
         return i, f"공짜 소리: 협주 {n}개가 쓰는 {NOTE_NAMES[kinds[i][1]]}"
     rnd = [i for i, _, r in kinds if r]
     if rnd:
