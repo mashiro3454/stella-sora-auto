@@ -106,6 +106,7 @@ class Bot:
         self.shop_plan = None
         self.shop_queue: list = []
         self.shop_rerolled = False
+        self.trade_tick = 0
         self.gamble_won = False
         self.require_gamble = True
         self.restart_pending = ""
@@ -242,6 +243,7 @@ class Bot:
         self.shop_plan = None
         self.shop_queue = []
         self.shop_rerolled = False
+        self.trade_tick = 0
         self.floor_changed_at = time.monotonic()
         self.loading_at = None
         self.run.floor = floor
@@ -383,6 +385,16 @@ class Bot:
         self.gi.key("esc")
         time.sleep(0.8)
 
+    def nudge_until(self, prompt: str) -> bool:
+        """목표 앞에 왔는데 상호작용 표시가 안 뜨면 아래/위/왼쪽/오른쪽으로 조금씩 움직여 본다."""
+        for keys in (["s"], ["w"], ["a"], ["d"], ["s"], ["s"], ["w"], ["w"]):
+            self.gi.hold(keys, 0.25)
+            time.sleep(0.15)
+            if nv.find_prompt(self.grab()) == prompt:
+                self.log("이동", f"조금씩 움직여서 '{prompt}' 표시를 찾음")
+                return True
+        return False
+
     def nearest_label(self, img: np.ndarray, char: tuple[float, float]) -> str:
         labels = self.npc_labels(img)
         if not labels:
@@ -443,9 +455,8 @@ class Bot:
                     self.log("NPC", f"{name}: 대화가 안 열림 (이미 끝난 이벤트일 수 있음)")
                 return None
 
-        # 1-1) 거래의 방: 강화머신("강화" 초록 글자) 쪽으로 먼저 간다
-        if self.want_enhance(img) and now - self.npc_scanned > NPC_SCAN_EVERY:
-            self.npc_scanned = now
+        # 1-1) 거래의 방: 강화머신("강화" 초록 글자) 쪽으로 먼저 간다 (거래의 방은 매번 찾는다)
+        if self.want_enhance(img):
             box = self.find_green_label(img, "강화")
             if box:
                 x, y, w, h = box
@@ -456,6 +467,8 @@ class Bot:
                                      stop=lambda im: self.walk_stop(im) or nv.find_prompt(im) == "enhance",
                                      arrive_dist=50, max_steps=30)
                 self.log("강화", f"걷기 결과 {res.reason} ({res.steps}걸음)")
+                if nv.find_prompt(self.grab()) != "enhance":
+                    self.nudge_until("enhance")
                 return None
 
         # 2) 화면에 말 안 건 NPC 이름표가 있으면 그쪽으로 걸어간다 (상점 NPC는 거래의 방에서 강화 뒤에만)
@@ -494,7 +507,13 @@ class Bot:
         # 2-1-1) 거래의 방은 강화머신과 상점이 끝나야 나간다
         if self.room == "거래" and (self.want_enhance(img) or not self.shop_done):
             if now - self.floor_changed_at < TRADE_TIMEOUT:
-                self._explore("강화머신/상점을 찾으려고 둘러봄")
+                # 다음 루프에서 이름표부터 다시 찾고, 둘러보기는 두 번에 한 번만 (근처에서 멀어지지 않게)
+                self.npc_scanned = 0.0
+                self.trade_tick += 1
+                if self.trade_tick % 2 == 0:
+                    self._explore("강화머신/상점을 찾으려고 둘러봄")
+                else:
+                    time.sleep(0.3)
                 return None
             self.shop_done = True
             self.enhance_count = 99
