@@ -99,6 +99,7 @@ class Bot:
         self.last_talk_at = 0.0
         self.exit_seen_at: float | None = None  # 이 층에서 출구를 처음 본 때
         self.floor_known = False  # 봇을 탑 중간에서 켜면 처음엔 몇 층인지 모른다
+        self.floor_uncertain = False  # 지도에서 층을 못 읽어 짐작으로 둔 상태 (다음 제목을 그대로 믿는다)
         self.combat_done = True  # 이 층 전투가 끝났는지 ("소리 획득"을 봤는지)
         self.joined_midway = False  # 봇을 층 중간에 켰는지 (전투 끝을 이미 지나쳤을 수 있다)
         self.enhance_count = 0  # 이 거래의 방에서 강화머신을 누른 횟수
@@ -249,6 +250,7 @@ class Bot:
         self.loading_at = None
         self.run.floor = floor
         self.floor_known = True
+        self.floor_uncertain = False
         self.exit_seen_at = None
         self._last_cards = None
         self.room = room
@@ -281,7 +283,7 @@ class Bot:
                 return True
             return False
         self.title_seen = now
-        if self.floor_known and floor != self.run.floor:
+        if self.floor_known and floor != self.run.floor and not self.floor_uncertain:
             # 층은 한 번에 1씩만 오른다. OCR이 "3/20층"을 "13/20층"으로 읽는 일이 있었다
             if floor < self.run.floor:
                 return False
@@ -702,22 +704,30 @@ class Bot:
         raise Stop("재시작이 3분 안에 안 끝남")
 
     def read_floor_from_map(self) -> None:
-        """탑 안에서 시작할 때: ESC 지도의 "3/20층 전투의 방"으로 지금 층을 안다."""
-        self.gi.key("esc")
-        time.sleep(1.0)
-        img = self.grab()
-        if self.det.detect(img).state == "esc_map":
+        """탑 안에서 시작할 때: ESC 지도의 "3/20층 전투의 방"으로 지금 층을 안다.
+        카드 고른 직후 같은 때 ESC를 누르면 지도가 안 열리기도 해서 세 번까지 해 본다."""
+        for attempt in range(3):
+            time.sleep(0.5)
+            if self.det.detect(self.grab()).state != "field":
+                return  # 다른 화면이 떴다 (카드 선택 등). 그 화면을 먼저 처리하고 다음에 다시
+            self.gi.key("esc")
+            time.sleep(1.0)
+            img = self.grab()
+            if self.det.detect(img).state != "esc_map":
+                continue
             text = self.ocr.text(img, (600, 60, 1300, 1020)).replace(" ", "")
             m = TITLE_FLOOR_RE.search(text)
+            self.gi.key("esc")
+            time.sleep(0.6)
             if m:
                 self.new_floor(int(m.group(1)), next((r for r in ROOM_NAMES if r in text), ""))
                 self.joined_midway = True  # 이 층 전투가 이미 끝났을 수 있다
                 self.nav.new_room(self.run.floor, self.room, ROOM_BY_FLOOR.get(self.run.floor + 1, ""), at_entrance=False)
-            self.gi.key("esc")
-            time.sleep(0.6)
-        if not self.floor_known:
-            self.floor_known = True  # 못 읽어도 계속 ESC를 누르지 않게. 다음 방 제목에서 바로잡힌다
-            self.log("층", f"지도에서 층을 못 읽음, {self.run.floor}층으로 둠")
+                return
+        # 못 읽으면 계속 ESC를 누르지 않게 일단 넘어가고, 다음 방 제목의 층 번호를 그대로 믿는다
+        self.floor_known = True
+        self.floor_uncertain = True
+        self.log("층", f"지도에서 층을 못 읽음, 다음 방 제목으로 층을 정함 (지금은 {self.run.floor}층으로 둠)")
 
     def play(self, max_floors: int) -> None:
         """게임 창이 잠깐 가려지거나 다른 창이 앞으로 와도 꺼지지 않고, 기다렸다가 화면을 다시 보고 이어 간다."""
