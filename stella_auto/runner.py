@@ -511,7 +511,7 @@ class Bot:
                 self.npc_scanned = 0.0
                 self.trade_tick += 1
                 if self.trade_tick % 2 == 0:
-                    self._explore("강화머신/상점을 찾으려고 둘러봄")
+                    self._explore("강화머신/상점을 찾으려고 둘러봄", avoid_exit=True)
                 else:
                     time.sleep(0.3)
                 return None
@@ -530,7 +530,7 @@ class Bot:
 
         # 3) 선택의 방은 NPC와 이야기하기 전엔 나가지 않는다
         if self.room == "선택" and not self.talked and now - self.floor_changed_at < CHOICE_SEARCH:
-            self._explore("선택의 방 NPC를 찾으려고 둘러봄")
+            self._explore("선택의 방 NPC를 찾으려고 둘러봄", avoid_exit=True)
             return None
 
         # 방 제목이 떠 있는 동안은 제목 글자(ㅇ)를 출구 문양으로 착각할 수 있어서 기다린다
@@ -579,9 +579,23 @@ class Bot:
         self.log("이동", f"걷기 결과 {res.reason} ({res.steps}걸음)")
         return None
 
-    def _explore(self, why: str) -> None:
-        ang = (90, 0, 180, -90)[self.explore_i % 4]
-        self.explore_i += 1
+    def _explore(self, why: str, avoid_exit: bool = False) -> None:
+        """사방을 돌아가며 조금씩 걸어 본다. avoid_exit이면 출구 쪽(90도 이내)으로는 안 간다
+        (아직 나가면 안 되는 방에서 둘러보다 출구 문에 들어가 버린 일이 있었다)."""
+        exit_ang = None
+        if avoid_exit:
+            img = self.grab()
+            char = nv.find_character(img)
+            t = nv.exit_target(img, char) if char else None
+            if t is not None:
+                exit_ang = nv.angle_of(t[0] - char[0], t[1] - char[1])
+        for _ in range(4):
+            ang = (90, 0, 180, -90)[self.explore_i % 4]
+            self.explore_i += 1
+            if exit_ang is None or abs((ang - exit_ang + 180) % 360 - 180) > 90:
+                break
+        else:
+            ang = exit_ang + 180
         self.log("이동", f"{why} ({ang:+.0f}도)")
         self.gi.hold(list(nv.keys_for_angle(ang)), 1.2)
 
