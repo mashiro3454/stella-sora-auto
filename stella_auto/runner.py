@@ -83,6 +83,7 @@ class Bot:
         self.pool = team_pool(preset)
         self.run = RunState()
         self.exit_angle: float | None = None  # 이 층에서 마지막으로 본 출구 방향
+        self.blind_walks = 0  # 출구가 안 보일 때 마지막 방향으로 간 횟수
         self.idle_since: float | None = None  # 출구를 못 찾기 시작한 때
         self.explore_i = 0
         self.room = ""  # 이 층 방 종류 (전투/선택/강적/거래/리더)
@@ -99,6 +100,7 @@ class Bot:
         self.exit_seen_at: float | None = None  # 이 층에서 출구를 처음 본 때
         self.floor_known = False  # 봇을 탑 중간에서 켜면 처음엔 몇 층인지 모른다
         self.combat_done = True  # 이 층 전투가 끝났는지 ("소리 획득"을 봤는지)
+        self.joined_midway = False  # 봇을 층 중간에 켰는지 (전투 끝을 이미 지나쳤을 수 있다)
         self.enhance_count = 0  # 이 거래의 방에서 강화머신을 누른 횟수
         self.shop_done = False
         self.shop_plan = None
@@ -234,6 +236,7 @@ class Bot:
     def new_floor(self, floor: int, room: str) -> None:
         room = ROOM_BY_FLOOR.get(floor, "") or room  # OCR로 읽은 방 이름보다 층 구성표를 믿는다
         self.combat_done = room not in COMBAT_ROOMS
+        self.joined_midway = False
         self.enhance_count = 0
         self.shop_done = room != "거래"
         self.shop_plan = None
@@ -250,6 +253,7 @@ class Bot:
         self.exit_angle = None
         self.idle_since = None
         self.explore_i = 0
+        self.blind_walks = 0
         self.log("층", f"{floor}층 {room + '의 방' if room else ''}")
 
     def check_title(self, img: np.ndarray) -> bool:
@@ -498,11 +502,12 @@ class Bot:
 
         # 2-2) 전투방은 전투가 끝나야("소리 획득") 나간다. 출구는 전투 중에도 보인다
         if not self.combat_done:
-            if now - self.floor_changed_at < COMBAT_TIMEOUT:
+            limit = COMBAT_TIMEOUT if not self.joined_midway else 40.0
+            if now - self.floor_changed_at < limit:
                 time.sleep(0.4)
                 return None
             self.combat_done = True
-            self.log("전투", f"{COMBAT_TIMEOUT:.0f}초 동안 소리 획득을 못 봄, 전투가 끝난 것으로 보고 진행", img)
+            self.log("전투", f"{limit:.0f}초 동안 소리 획득을 못 봄, 전투가 끝난 것으로 보고 진행", img)
 
         # 3) 선택의 방은 NPC와 이야기하기 전엔 나가지 않는다
         if self.room == "선택" and not self.talked and now - self.floor_changed_at < CHOICE_SEARCH:
@@ -521,15 +526,18 @@ class Bot:
             if now - self.idle_since < 4:
                 time.sleep(0.4)  # 아직 전투 중이거나 출구가 안 열렸을 수 있다
                 return None
-            if self.exit_angle is not None:
-                self.log("이동", f"출구가 안 보임, 마지막으로 본 방향({self.exit_angle:+.0f}도)으로 감")
+            if self.exit_angle is not None and self.blind_walks < 3:
+                self.blind_walks += 1
+                self.log("이동", f"출구가 안 보임, 마지막으로 본 방향({self.exit_angle:+.0f}도)으로 감 ({self.blind_walks}/3)")
                 self.gi.hold(list(nv.keys_for_angle(self.exit_angle)), 1.2)
-            else:
+            else:  # 그 방향이 막혔거나 본 적이 없으면 사방을 둘러본다
+                self.exit_angle = None
                 self._explore("출구를 찾으려고 둘러봄")
             self.idle_since = now - 2
             return None
         self.exit_angle = nv.angle_of(target[0] - char[0], target[1] - char[1])
         self.idle_since = None
+        self.blind_walks = 0
         if self.exit_seen_at is None:
             self.exit_seen_at = now
         if self.require_gamble and not self.gamble_won and self.run.floor >= GAMBLE_LAST_FLOOR:
@@ -662,6 +670,7 @@ class Bot:
             m = TITLE_FLOOR_RE.search(text)
             if m:
                 self.new_floor(int(m.group(1)), next((r for r in ROOM_NAMES if r in text), ""))
+                self.joined_midway = True  # 이 층 전투가 이미 끝났을 수 있다
             self.gi.key("esc")
             time.sleep(0.6)
         if not self.floor_known:
