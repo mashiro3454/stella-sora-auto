@@ -49,3 +49,9 @@ def test_quiz_answer_from_sstoy_sheet():
 
 def test_not_quiz_falls_through():
     assert choose_option(PORTIA, 3, "사실 너도 상품으로 팔릴 수 있어.") == (1, "HP 내고 잠재력/돈")
+
+
+def test_sell_notes_for_150_real_text():
+    # 실제 OCR 결과 그대로 (동전 아이콘이 0으로 읽혀 150이 1500, 30이 300)
+    opts = [("코인으로 바꿔쥐.", "랜덤 소리 5개 소모, 1500 획득"), ("아냐, 됐어.", "300 획득!")]
+    assert choose_option(opts, 2, "당신이 진짜 좋아하는 소리가, 이건 아니겠죠?") == (0, "소리 팔고 150원")

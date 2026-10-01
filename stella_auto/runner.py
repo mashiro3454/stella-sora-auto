@@ -624,7 +624,8 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
         if "33%" in s and "잠재력" in s:
             return i, "33% 잠재력"
     for i, s in enumerate(texts):
-        if "소리" in s and "150" in s and ("팔" in s or "판매" in s):
+        # "코인으로 바꿔줘 / 랜덤 소리 5개 소모, 150 획득" 처럼 "판다"는 말이 없을 때도 있다
+        if "소리" in s and "150" in s and ("팔" in s or "판매" in s or ("소모" in s and "획득" in s)):
             return i, "소리 팔고 150원"
     if any("소리" in s and ("90" in s or "140" in s) for s in texts):
         for i, s in enumerate(texts):
