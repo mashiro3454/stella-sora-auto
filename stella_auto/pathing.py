@@ -358,9 +358,9 @@ class Navigator:
                 else:
                     lost = 0
                 pos = self.observe(img, char)
-                if avoid_exit and self._exit_too_close(img, char or CHAR_FALLBACK, pos):
-                    return NavResult("near_exit", now - t0)
                 goal = goal_fn(img, char or CHAR_FALLBACK, pos)
+                if avoid_exit and self._exit_too_close(img, char or CHAR_FALLBACK, pos, goal.pos if goal else None):
+                    return NavResult("near_exit", now - t0)
                 if goal is None:
                     return NavResult("no_goal", now - t0)
                 if goal.kind != last_goal_kind and now - last_goal_log > 1.5:
@@ -438,9 +438,12 @@ class Navigator:
         finally:
             self.gi.set_held(())
 
-    def _exit_too_close(self, img: np.ndarray, char: tuple[float, float], pos: tuple[float, float]) -> bool:
+    def _exit_too_close(self, img: np.ndarray, char: tuple[float, float], pos: tuple[float, float],
+                        toward: tuple[float, float] | None = None) -> bool:
         """아직 나가면 안 될 때: 화면에 출구 문양이 보이면 그 둘레를 피할 곳으로 정하고, 이미 가까우면 True.
-        (5층 거래의 방에서 상점을 찾으며 둘러보다 출구에 들어가 버렸다)"""
+        (5층 거래의 방에서 상점을 찾으며 둘러보다 출구에 들어가 버렸다)
+        toward(가려는 곳)가 문양과 다른 쪽이면 가까워도 멈추지 않는다 (20층: 시작 자리 옆 바닥 무늬를 출구로 알고
+        기억한 강화머신 자리로 한 발짝도 못 가 150초를 날렸다)."""
         hue = nv.DOOR_HUE.get(self.next_kind, (None, 0))[0]
         door = nv.find_exit_door(img, char, hue)
         if door and nv.door_matches(door, self.next_kind):
@@ -452,6 +455,9 @@ class Navigator:
             if not any(math.hypot(c[0] - w[0], c[1] - w[1]) < 100 for c, _ in self.map.avoid):
                 self.map.avoid.append((w, EXIT_AVOID_R))
             if math.hypot(w[0] - pos[0], w[1] - pos[1]) < EXIT_AVOID_R + 60:
+                if toward is not None and nv.angle_diff(nv.angle_of(w[0] - pos[0], w[1] - pos[1]),
+                                                        nv.angle_of(toward[0] - pos[0], toward[1] - pos[1])) > 75:
+                    return False  # 문양에서 멀어지는 쪽으로 간다
                 self.log("이동", f"출구 문양이 가까워서 멈춤 ({w[0]:.0f}, {w[1]:.0f})")
                 return True
         return False

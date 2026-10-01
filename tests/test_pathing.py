@@ -282,3 +282,20 @@ def test_scattered_exit_memory_not_used(tmp_path):
     for p in [(1800, -300), (1850, -330), (1790, -310), (2600, -700)]:
         mem.record(r2, 1, NavMap(), p)
     assert not mem.exit_scattered(r2)
+
+
+def test_near_exit_only_when_heading_to_it(tmp_path, monkeypatch):
+    # 20층: 시작 자리 옆 바닥 무늬를 출구로 알고 어디로도 못 갔다 -> 문양에서 멀어지는 쪽은 간다
+    world = FakeWorld([], (1500, 1800))
+    nav = make_nav(world, tmp_path)
+    pos = nav.last_pos
+    door_screen = (960 + 150, 555)  # 캐릭터 오른쪽 150px
+
+    class D:
+        center = door_screen
+
+    monkeypatch.setattr(nv, "find_exit_door", lambda img, char, hue=None: D())
+    monkeypatch.setattr(nv, "door_matches", lambda door, kind: True)
+    img = world.grab()
+    assert nav._exit_too_close(img, (960, 555), pos, (pos[0] + 500, pos[1]))  # 문 쪽으로 감
+    assert not nav._exit_too_close(img, (960, 555), pos, (pos[0] - 500, pos[1]))  # 반대쪽

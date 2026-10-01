@@ -151,18 +151,24 @@ class NavMap:
         rad = math.radians(angle)
         ux, uy = math.cos(rad), -math.sin(rad)
         score = 0.0
-        for k in range(1, int(dist / (CELL / 2)) + 1):
-            d = k * CELL / 2
-            c = to_cell((start[0] + ux * d, start[1] + uy * d))
-            if not self.passable(c):
-                break
-            if c in self.free:
-                score += 0.2
-            else:
-                look = self.looks.get(c, 0.6)
-                if look < 0.05:
-                    break  # 바닥으로 안 보이는 곳 너머는 셈하지 않는다
-                score += look
+        saved_avoid = self.avoid
+        # 피할 곳 안에 서 있으면 그 피할 곳은 빼고 본다 (20층: 바닥 무늬를 출구로 알고 그 옆에서 "더 가 볼 곳이 없음"만 150초)
+        self.avoid = [(c, r) for c, r in self.avoid if math.hypot(start[0] - c[0], start[1] - c[1]) >= r]
+        try:
+            for k in range(1, int(dist / (CELL / 2)) + 1):
+                d = k * CELL / 2
+                c = to_cell((start[0] + ux * d, start[1] + uy * d))
+                if not self.passable(c):
+                    break
+                if c in self.free:
+                    score += 0.2
+                else:
+                    look = self.looks.get(c, 0.6)
+                    if look < 0.05:
+                        break  # 바닥으로 안 보이는 곳 너머는 셈하지 않는다
+                    score += look
+        finally:
+            self.avoid = saved_avoid
         return score
 
     # -- 저장 -------------------------------------------------------------------
