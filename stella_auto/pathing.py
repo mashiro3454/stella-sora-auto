@@ -84,6 +84,7 @@ class Navigator:
         self.door_seen: tuple[float, float] | None = None  # 이번에 본 출구 문양 자리
         self.door_candidate: tuple[float, float] | None = None  # 한 번 본 문양 자리 (한 번 더 보면 믿는다)
         self.false_doors: list[tuple[float, float]] = []  # 가 봤는데 문이 아니었던 자리 (이 방에서만)
+        self.ignored_doors = 0  # 믿는 출구 자리와 멀어서 무시한 문양 수 (이 방에서만)
         self.memory_exit: tuple[float, float] | None = None
         self.marker_goal: tuple[float, float] | None = None
         self.marker_goal_at = 0.0
@@ -121,6 +122,7 @@ class Navigator:
         self.door_seen = None
         self.door_candidate = None
         self.false_doors = []
+        self.ignored_doors = 0
         self.memory_exit = None
         self.marker_goal = None
         self.explore_last = None
@@ -259,7 +261,11 @@ class Navigator:
             return Goal(self.marker_goal, "marker")
         hue = nv.DOOR_HUE.get(self.next_kind, (None, 0))[0]
         door = nv.find_exit_door(img, char, hue)
-        if door and nv.door_matches(door, self.next_kind) and not self._is_false_door(self.odo.to_world(door.center))                 and not self._far_from_trusted_exit(self.odo.to_world(door.center)):
+        if door and nv.door_matches(door, self.next_kind) and not self._is_false_door(self.odo.to_world(door.center)) \
+                and self._far_from_trusted_exit(self.odo.to_world(door.center)):
+            self.ignored_doors += 1  # 믿는 출구와 먼 문양 (runner가 출구로 못 가는 게 겹치면 기억 대신 이 문을 믿는다)
+        if door and nv.door_matches(door, self.next_kind) and not self._is_false_door(self.odo.to_world(door.center)) \
+                and not self._far_from_trusted_exit(self.odo.to_world(door.center)):
             w = self.odo.to_world(door.center)
             # 같은 자리(월드 좌표)에서 두 번 보여야 문으로 믿는다 (한 번 우연히 잡힌 무늬에 끌려가지 않게)
             c = self.door_candidate

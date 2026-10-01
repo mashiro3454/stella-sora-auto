@@ -814,9 +814,12 @@ class Bot:
                 # 잘못 적은 막힌 칸 때문에 길이 막혀 구석으로 가는 경우가 있다 (8층: NPC에 막힌 뒤 왼쪽 끝 술통까지 감)
                 n = self.nav.map.forget_blocks()
                 self.log("이동", f"출구로 {self.exit_fails}번 못 감: 막힌 칸 {n}개를 지우고 길을 다시 찾음")
-            if self.exit_fails == 6 and self.nav.memory_exit is not None:
+            if self.nav.memory_exit is not None and (self.exit_fails >= 6 or
+                                                     (self.exit_fails >= 2 and self.nav.ignored_doors >= 2)):
+                # 15층: 화면에 진짜 문이 보이는데 믿는 출구 자리와 멀다고 무시하고 70초 헤맸다 (이번 판 위치가 어긋남)
                 self.nav.memory_exit = None
-                self.log("이동", "기억한 출구로 6번 못 가서 이번 층은 화면 표시와 문양만 따라감")
+                self.log("이동", f"기억한 출구로 {self.exit_fails}번 못 감 (무시한 문양 {self.nav.ignored_doors}번): "
+                               "이번 층은 화면 표시와 문양만 따라감")
         elif res.reason == "stopped":
             self.exit_fails = 0
         return None
