@@ -57,6 +57,11 @@ python -m stella_auto.screen   # 켜져 있는 게임을 보면서 화면이 바
 좌표는 `stella_auto/screen.py`, 테스트용 샘플 화면은 `tests/screens/`(파일 이름 앞부분이 정답)에 있다.
 기준 조각을 다시 만들 때: `python tools/make_templates.py`.
 
+## 게임 입력
+
+`stella_auto/input.py`의 `GameInput`으로 클릭(`click(x, y)`, 게임 화면 좌표)과 키(`key`, `hold`)를 보낸다.
+입력 직전마다 맨 앞 창이 게임인지 확인하고, 아니면 아무것도 안 보내고 멈춘다.
+
 ## 도자기 점수
 
 규칙은 [docs/tower-rules.md](docs/tower-rules.md), 코드는 `stella_auto/score.py`.
