@@ -892,10 +892,12 @@ class Bot:
         (사용자 규칙 2026-10-02. 흐름은 stella_auto/record.py 맨 위)"""
         name = rc.record_name()
         img = self.grab()
+        self.save_full(img, "record_potentials")  # 나중에 카드 레벨 숫자 읽기를 만들 자료
         # 1) 레코드 스킬 탭에서 평점 레벨, 협주스킬 레벨
         self.gi.click(*rc.TAB_SKILLS)
         time.sleep(1.0)
         skills = self.grab()
+        self.save_full(skills, "record_skills")
         level = rc.read_record_level(skills, self.ocr)
         ensemble = rc.read_ensemble_levels(skills, self.ocr)
         self.gi.click(*rc.TAB_POTENTIALS)
