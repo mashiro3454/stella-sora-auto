@@ -693,7 +693,12 @@ class Bot:
                 return None
 
         # 2) 화면에 말 안 건 NPC 이름표가 있으면 그쪽으로 걸어간다 (상점 NPC는 거래의 방에서 강화 뒤에만)
-        if now - self.npc_scanned > NPC_SCAN_EVERY:
+        # 20층 보스 뒤: 강화머신 자리를 알면 강화부터 (규칙 순서. 상점에서 돈을 다 써서 강화를 1번만 했다)
+        # (기억한 자리에 아직 안 가 봤을 때만: 가 봤는데 못 찾았으면 상점이라도 들른다)
+        enhance_first = (self.run.floor == 20 and self.combat_done and self.want_enhance(img)
+                         and any(("enhance", round(x), round(y)) not in self.spots_tried
+                                 for x, y in self.nav.spots("enhance")))
+        if now - self.npc_scanned > NPC_SCAN_EVERY and not enhance_first:
             self.npc_scanned = now
             shop_ok = self.has_shop() and not self.shop_done and not self.want_enhance(img)
             todo = [lb for lb in self.npc_labels(img) if not self.already_talked(lb[0]) and (not lb[2] or shop_ok)]
