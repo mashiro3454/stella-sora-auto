@@ -183,6 +183,22 @@ def _grab(hwnd: int, width: int, height: int, method: str, src: tuple[int, int] 
         user32.ReleaseDC(hwnd if method == "printwindow" else 0, window_dc)
 
 
+SW_RESTORE = 9
+
+
+def restore(win: GameWindow, timeout: float = 5.0) -> GameWindow:
+    """최소화된 게임 창을 원래 크기로 되돌린다. 맨 앞으로 가져오지는 않는다."""
+    user32.ShowWindow(win.hwnd, SW_RESTORE)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        w = describe(win.hwnd)
+        if not w.minimized and w.width > 0:
+            time.sleep(0.5)  # 최소화 중엔 게임이 화면을 안 그려서 한 프레임 그릴 시간을 준다
+            return describe(win.hwnd)
+        time.sleep(0.1)
+    raise RuntimeError("게임 창을 되살리지 못함")
+
+
 def capture(win: GameWindow, method: str = "printwindow") -> np.ndarray:
     """게임 클라이언트 영역을 BGR 이미지로 돌려준다."""
     if win.minimized:
@@ -214,8 +230,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{PROCESS_NAME} 창을 못 찾음. 게임이 켜져 있어?", file=sys.stderr)
         return 1
     if win.minimized:
-        print("게임 창이 최소화돼 있어서 못 찍음. 창을 다시 열어줘", file=sys.stderr)
-        return 1
+        print("게임 창이 최소화돼 있어서 되살림")
+        win = restore(win)
     print(f"창: '{win.title}' 클라이언트 {win.width}x{win.height} @ ({win.left},{win.top}) "
           f"DPI {win.dpi} ({win.dpi * 100 // 96}%)")
     if (win.width, win.height) != (1920, 1080):
