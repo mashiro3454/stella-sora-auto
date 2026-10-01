@@ -47,6 +47,16 @@ python -m stella_auto.capture --every 2 -n 30 # 2초마다 30장
 게임 창(StellaSora.exe)을 찾아서 게임 화면(클라이언트 영역)만 찍는다. 기본 방식(PrintWindow)은
 다른 창에 가려져도 게임 화면이 찍힌다. 최소화돼 있으면 못 찍는다.
 
+## 화면 인식
+
+```bash
+python -m stella_auto.screen   # 켜져 있는 게임을 보면서 화면이 바뀔 때마다 무슨 화면인지 출력
+```
+
+화면마다 잘 안 변하는 UI 조각(기준 조각)을 템플릿 매칭으로 찾는다. 기준 조각은 `data/templates/`,
+좌표는 `stella_auto/screen.py`, 테스트용 샘플 화면은 `tests/screens/`(파일 이름 앞부분이 정답)에 있다.
+기준 조각을 다시 만들 때: `python tools/make_templates.py`.
+
 ## 도자기 점수
 
 규칙은 [docs/tower-rules.md](docs/tower-rules.md), 코드는 `stella_auto/score.py`.
