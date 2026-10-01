@@ -108,10 +108,13 @@ class FakeWorld:
 
     SPEED = 370.0  # px/초 (실제 게임과 비슷)
 
-    def __init__(self, walls, start):
+    def __init__(self, walls, start, paint=False):
         rng = np.random.default_rng(1)
-        noise = rng.integers(0, 255, (900, 1200, 3), dtype=np.uint8)
+        noise = rng.integers(60, 140, (900, 1200, 3), dtype=np.uint8)  # 회색 무늬 바닥
         self.world = cv2.resize(cv2.GaussianBlur(noise, (0, 0), 1.2), (4800, 3600), interpolation=cv2.INTER_LINEAR)
+        if paint:  # 벽을 바닥과 다른 색으로 칠한다 (진짜 게임처럼 보이는 벽)
+            for x0, y0, x1, y1 in walls:
+                self.world[y0:y1, x0:x1] = (40, 40, 200)
         self.walls = walls
         self.pos = np.array(start, float)
         self.held: tuple = ()
@@ -203,3 +206,23 @@ def test_room_entry_is_first_frame_after_loading(tmp_path):
     p2 = nav.observe(world.grab())
     assert len(mem.rooms) == 1 and nav.memory_exit == (1800.0, 400.0)
     assert abs(p2[0] - (960 + 40)) < 15 and abs(p2[1] - (555 - 20)) < 15
+
+
+def test_visible_wall_is_avoided_before_bumping(tmp_path):
+    # 벽이 바닥과 다른 색으로 보이면, 부딪혀 보기 전에 바닥 같은 쪽으로 돌아간다
+    walls = [(1900, 1400, 2250, 2200)]  # 큰 가구처럼 두꺼운 벽
+    bumps = {}
+    for paint in (False, True):
+        world = FakeWorld(walls, (1500, 1800), paint=paint)
+        nav = make_nav(world, tmp_path / str(paint))
+        start = nav.last_pos
+        # 바닥 색을 배우게 잠깐 왼쪽으로 걸었다 돌아온다
+        nav.walk(lambda im, ch, p: Goal((start[0] - 250, start[1]), "test", arrive=60), lambda im: False, max_sec=4)
+        goal = (start[0] + 1100, start[1])
+        for _ in range(4):
+            res = nav.walk(lambda im, ch, p: Goal(goal, "test", arrive=80), lambda im: False, max_sec=12)
+            if res.reason == "arrived":
+                break
+        assert res.reason == "arrived"
+        bumps[paint] = len(nav.map.blocked)
+    assert bumps[True] < bumps[False]

@@ -7,6 +7,8 @@
   막지는 않고 비싸게만 둔다.
 - 피할 곳(avoid): 아직 나가면 안 될 때 출구 문 주변 같은 곳. 지나갈 수 없다.
 - 모르는 칸: 지나갈 수 있다고 보되 걸어 본 칸보다 조금 비싸다.
+- 바닥 같아 보이는 정도(looks, 0~1): 지금 화면에서 그 칸이 걸어 본 바닥과 색이 얼마나 비슷한지.
+  안 걸어 본 칸 중 바닥 같지 않은 칸(벽, 가구)은 비싸게 보고, 둘러볼 때도 덜 쳐준다.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ class NavMap:
     soft: dict[Cell, int] = field(default_factory=dict)
     avoid: list[tuple[tuple[float, float], float]] = field(default_factory=list)  # (가운데, 반지름)
     visits: dict[Cell, int] = field(default_factory=dict)
+    looks: dict[Cell, float] = field(default_factory=dict)
 
     def visit(self, p: tuple[float, float]) -> None:
         c = to_cell(p)
@@ -65,6 +68,8 @@ class NavMap:
         cost = 1.0 if c in self.free else 1.3
         if c in self.soft:
             cost += 4.0
+        if c not in self.free:
+            cost += 6.0 * (1.0 - self.looks.get(c, 0.6)) ** 2  # 바닥으로 안 보이면 크게 돌아가는 편이 낫다
         x, y = c
         near = sum((x + dx, y + dy) in self.blocked for dx in (-1, 0, 1) for dy in (-1, 0, 1))
         return cost + 0.8 * near  # 벽에 바짝 붙어 가지 않게
@@ -142,7 +147,13 @@ class NavMap:
             c = to_cell((start[0] + ux * d, start[1] + uy * d))
             if not self.passable(c):
                 break
-            score += 0.2 if c in self.free else 1.0
+            if c in self.free:
+                score += 0.2
+            else:
+                look = self.looks.get(c, 0.6)
+                if look < 0.05:
+                    break  # 바닥으로 안 보이는 곳 너머는 셈하지 않는다
+                score += look
         return score
 
     # -- 저장 -------------------------------------------------------------------

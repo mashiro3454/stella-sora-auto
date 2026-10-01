@@ -22,6 +22,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Callable
 
+import cv2
 import numpy as np
 
 from . import navigate as nv
@@ -38,6 +39,9 @@ KEEP_KEYS_DEG = 28  # 원하는 방향이 지금 누르는 방향과 이만큼 �
 NO_PROGRESS_SEC = 9.0
 EXIT_AVOID_R = 280  # 아직 나가면 안 될 때 출구 둘레 이만큼은 안 간다
 MARKER_GOAL_DIST = 1400  # 출구 표시 방향으로 이만큼 앞을 목표로 둔다
+LOOK_EVERY = 0.5  # 초. 화면에서 바닥 같아 보이는 칸 매기기
+LOOK_SCALE = 8
+LOOK_SIGMA = 14.0  # Lab 색 거리. 걸어 본 바닥과 이만큼 다르면 바닥 같음이 e^-1
 MARKER_KEEP_SEC = 5.0  # 출구 표시가 사라져도 (문이 화면에 들어오는 중) 이만큼은 그 목표로 계속 간다
 
 
@@ -55,6 +59,10 @@ class NavResult:
 
 
 GoalFn = Callable[[np.ndarray, tuple[float, float], tuple[float, float]], "Goal | None"]
+
+
+def _hud(x: float, y: float) -> bool:
+    return (x < 420 and y < 200) or (x > 1420 and y < 85) or (x > 1780 and y < 230) or y > 930         or (x > 1450 and y > 760)
 
 
 class Navigator:
@@ -82,6 +90,8 @@ class Navigator:
         self.explore_last: float | None = None
         self.last_stop: tuple[float, tuple[float, float]] | None = None  # 걷다가 화면이 바뀌어 멈춘 때와 자리
         self.finished = True
+        self.looked_at = 0.0
+        self.floor_colors: deque = deque(maxlen=300)  # 이 방에서 걸어 본 바닥 칸들의 색
 
     # -- 방 드나들기 ------------------------------------------------------------
     # 로딩 화면을 보면(loading_seen) 그다음 첫 필드 화면이 새 방의 입구 화면이다. 위치는 그 화면을
@@ -112,6 +122,7 @@ class Navigator:
         self.memory_exit = None
         self.marker_goal = None
         self.explore_last = None
+        self.floor_colors.clear()
         self.finished = False
 
     def _identify(self) -> None:
@@ -167,7 +178,47 @@ class Navigator:
         pos = self.odo.to_world(char)
         self.map.visit(pos)
         self.last_pos = pos
+        now = time.monotonic()
+        if now - self.looked_at > LOOK_EVERY:
+            self.looked_at = now
+            self.look(img, char)
         return pos
+
+    def look(self, img: np.ndarray, char: tuple[float, float]) -> None:
+        """지금 화면에 보이는 칸마다 바닥 같아 보이는지 매긴다 (map.looks).
+
+        걸어 본 칸이 화면에 보이면 그 칸의 색(Lab 평균)을 바닥 표본으로 모으고, 안 걸어 본 칸은
+        표본과 색이 얼마나 가까운지로 0~1을 준다. 방마다 바닥이 달라서 방에 들어올 때마다 새로 모은다.
+        """
+        small = cv2.cvtColor(cv2.resize(img, (1920 // LOOK_SCALE, 1080 // LOOK_SCALE), interpolation=cv2.INTER_AREA),
+                             cv2.COLOR_BGR2LAB).astype(np.float32)
+        k = CELL // LOOK_SCALE
+        cx0, cy0 = self.odo.cam
+        cells, colors = [], []
+        for gy in range(int(cy0 // CELL), int((cy0 + 1080) // CELL) + 1):
+            for gx in range(int(cx0 // CELL), int((cx0 + 1920) // CELL) + 1):
+                sx, sy = gx * CELL - cx0, gy * CELL - cy0  # 칸 왼쪽 위의 화면 좌표
+                if sx < 0 or sy < 0 or sx + CELL > 1920 or sy + CELL > 1080:
+                    continue
+                mx, my = sx + CELL / 2, sy + CELL / 2
+                if _hud(mx, my) or math.hypot(mx - char[0], my - (char[1] - 60)) < 170:
+                    continue  # HUD, 캐릭터 몸
+                px, py = int(sx // LOOK_SCALE), int(sy // LOOK_SCALE)
+                cells.append((gx, gy))
+                colors.append(small[py:py + k, px:px + k].reshape(-1, 3).mean(axis=0))
+        if not cells:
+            return
+        colors = np.array(colors)
+        for c, col in zip(cells, colors):
+            if c in self.map.free:
+                self.floor_colors.append(col)
+        if len(self.floor_colors) < 5:
+            return
+        ref = np.array(self.floor_colors)
+        d = np.sqrt(((colors[:, None, :] - ref[None, :, :]) ** 2).sum(axis=2)).min(axis=1)
+        for c, dist in zip(cells, d):
+            if c not in self.map.free:
+                self.map.looks[c] = float(math.exp(-(dist / LOOK_SIGMA) ** 2))
 
     def exit_markers(self, img: np.ndarray, char: tuple[float, float]) -> list[nv.Marker]:
         return [m for m in nv.find_markers(img, char) if m.kind == "exit"]

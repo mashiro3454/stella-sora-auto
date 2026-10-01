@@ -57,3 +57,14 @@ def test_plan_full_price_when_rich_or_last_shop():
 def test_plan_reroll_on_2nd_and_4th():
     p = plan_purchases([], 500, shop_index=2, last_shop=False, reroll_left=1, reroll_price=100)
     assert p.reroll
+
+
+def test_note_count_reads_ocr_variants():
+    # 19층: "기술의 소리×15"를 OCR이 "%15"로 읽어 5개짜리 반값으로 알고 샀다
+    mk = lambda name: ShopItem(0, name, 200, 400, False, (0, 0))
+    assert mk("기술의 소리%15").note_count == 15
+    assert mk("폭발의 소리*5").note_count == 5
+    assert mk("강공의 소리x5").note_count == 5
+    assert mk("필살기의 소리 15").note_count == 15
+    plan = plan_purchases([mk("기술의 소리%15")], 3000, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None)
+    assert plan.buy == []

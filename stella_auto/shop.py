@@ -45,8 +45,11 @@ class ShopItem:
 
     @property
     def note_count(self) -> int:
-        m = re.search(r"[x×X]\s*(\d+)", self.name)
-        return int(m.group(1)) if m else 5
+        # OCR이 "×15"를 "%15", "*5"처럼 읽는다 (19층: "기술의 소리%15"를 5개짜리로 알고 200원에 샀다)
+        m = re.search(r"[x×X%*]\s*(\d+)\s*$", self.name.strip())
+        if m:
+            return int(m.group(1))
+        return 15 if re.search(r"1\s*5\s*$", self.name.strip()) else 5
 
 
 # 상품별 가격은 정해져 있다: (정가, 20% 할인, 50% 할인)
@@ -61,7 +64,7 @@ def _price_key(kind: str, name: str) -> str | None:
     if kind == "potential":
         return "potential"
     if kind == "notes":
-        return "notes15" if re.search(r"1\s*5\s*$", name.strip()) else "notes5"
+        return "notes15" if ShopItem(0, name, 0, None, False, (0, 0)).note_count == 15 else "notes5"
     return None
 
 
@@ -161,7 +164,7 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
     for it in sorted([i for i in avail if i.kind == "potential" and i.discounted], key=lambda i: i.price):
         take(it)
     for it in [i for i in avail if i.kind == "notes" and i.discounted and i.old_price
-               and i.price * 2 <= i.old_price + 1 and i.note_count == 5]:
+               and i.price * 2 <= i.old_price + 1 and i.note_count == 5 and i.price == PRICES["notes5"][2]]:
         take(it)
     full_potions = sorted([i for i in avail if i.kind == "potential" and not i.discounted], key=lambda i: i.price)
     for it in full_potions:
