@@ -130,3 +130,25 @@ def test_free_notes_tie_goes_to_fewer_owned():
             ("난 전부 잘 들어.", "랜덤 소리 5개 획득")]
     assert choose_option(opts, 16, note_users=users, note_have={0: 29, 6: 14})[0] == 1
     assert choose_option(opts, 16, note_users=users)[0] == 0  # 가진 개수를 모르면 앞의 것
+
+
+def _judge(before, reads):
+    import time as _t
+
+    from stella_auto.runner import Bot
+    b = Bot.__new__(Bot)
+    b._gamble_gold_before = before
+    b.grab = lambda: None
+    b.ocr = type("O", (), {"text": lambda self, im, box: ""})()
+    it = iter(reads)
+    b.read_gold = lambda im: next(it, None)
+    _t.sleep(0)
+    return b.judge_gamble()
+
+
+def test_gamble_gold_with_coin_read_as_digit():
+    # 06:03 진 판: 680 -> 480인데 코인 그림까지 "7480"으로 읽어 이긴 판으로 셌다
+    assert _judge(680, [7480, 7480, 7480])[0] is False
+    assert _judge(680, [1330, 1330, 1330])[0] is True
+    assert _judge(7680, [1330, 1330, 1330])[0] is True  # 앞의 값을 잘못 읽어도
+    assert _judge(680, [5555, 5555, 5555])[0] is None  # 말이 안 되면 아직 모름
