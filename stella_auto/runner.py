@@ -509,6 +509,14 @@ class Bot:
         if price > ENHANCE_MAX_PRICE:
             return False
         gold = self.read_gold(img)
+        if gold is not None and gold < price:
+            # 모자라 보이면 몇 번 더 읽는다 (08:01 20층: 1821원인데 강화를 건너뛰고 상점에서 돈을 다 썼다).
+            # 돈이 정말 모자랄 때 매번 다시 읽지 않게 3초 동안은 앞의 판단을 쓴다
+            now = time.monotonic()
+            cached = getattr(self, "_enh_gold_check", None)
+            if cached is None or now - cached[0] > 3:
+                self._enh_gold_check = (now, self.read_gold_steady(3))
+            gold = self._enh_gold_check[1]
         return gold is None or gold >= price
 
     def find_green_label(self, img: np.ndarray, word: str) -> tuple[int, int, int, int] | None:
