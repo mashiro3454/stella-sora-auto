@@ -638,8 +638,12 @@ class Bot:
                 res = self.nav.walk(self.label_goal(img, box, 60), self.stop_for("talk"), max_sec=15,
                                     avoid_exit=True, why=f"NPC {name}")
                 self.log("NPC", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
-                if res.reason != "stopped":
+                if res.reason not in ("stopped", "near_exit"):
                     self.talked.add(name)  # 못 가면 이 NPC는 포기 (무한 반복 방지)
+                elif res.reason == "near_exit":
+                    # 출구 옆이라 멈춤: 포기하진 않지만 같은 길로 바로 다시 가지 않게 잠깐 쉰다
+                    # (5층: 상점 NPC를 포기 목록에 넣어 상점을 못 들렀다)
+                    self.npc_scanned = now + 6
                 return None
 
         # 2-1) 화면 밖 NPC는 물음표 상자 표시를 따라간다 (전투가 끝나야 NPC가 생기는 방도 있다)

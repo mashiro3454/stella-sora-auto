@@ -418,6 +418,8 @@ class Navigator:
         door = nv.find_exit_door(img, char, hue)
         if door and nv.door_matches(door, self.next_kind):
             w = self.odo.to_world(door.center)
+            if self._is_false_door(w) or self._far_from_trusted_exit(w):
+                return False  # 문이 아니었던 자리, 또는 여러 번 나가 본 출구와 먼 무늬
             if self.door_seen is None:
                 self.door_seen = w
             if not any(math.hypot(c[0] - w[0], c[1] - w[1]) < 100 for c, _ in self.map.avoid):
