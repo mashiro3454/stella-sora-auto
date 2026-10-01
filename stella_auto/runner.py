@@ -104,6 +104,7 @@ class Bot:
         self._quiz_waits = 0
         self.loading_at: float | None = None  # 층 사이 로딩을 본 때 (방 제목을 놓치면 이걸로 층을 센다)
         self.floor_changed_at = 0.0
+        self.exit_fails = 0
         self.last_talk_at = 0.0
         self.exit_seen_at: float | None = None  # 이 층에서 출구를 처음 본 때
         self.floor_known = False  # 봇을 탑 중간에서 켜면 처음엔 몇 층인지 모른다
@@ -339,6 +340,7 @@ class Bot:
         self.floor_known = True
         self.floor_uncertain = False
         self.exit_seen_at = None
+        self.exit_fails = 0
         self._last_cards = None
         self.room = room
         self.talked = set()
@@ -737,6 +739,17 @@ class Bot:
         self.log("이동", f"출구로 감: {goal.kind} ({goal.pos[0]:.0f}, {goal.pos[1]:.0f}), 지금 ({pos[0]:.0f}, {pos[1]:.0f})", img)
         res = self.nav.walk(self.nav.exit_goal, self.walk_stop, max_sec=45, why="출구")
         self.log("이동", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
+        if res.reason in ("no_progress", "no_path", "timeout"):
+            self.exit_fails += 1
+            if self.exit_fails % 3 == 0:
+                # 잘못 적은 막힌 칸 때문에 길이 막혀 구석으로 가는 경우가 있다 (8층: NPC에 막힌 뒤 왼쪽 끝 술통까지 감)
+                n = self.nav.map.forget_blocks()
+                self.log("이동", f"출구로 {self.exit_fails}번 못 감: 막힌 칸 {n}개를 지우고 길을 다시 찾음")
+            if self.exit_fails == 6 and self.nav.memory_exit is not None:
+                self.nav.memory_exit = None
+                self.log("이동", "기억한 출구로 6번 못 가서 이번 층은 화면 표시와 문양만 따라감")
+        elif res.reason == "stopped":
+            self.exit_fails = 0
         return None
 
     # -- 걷기 도우미 -------------------------------------------------------------
@@ -800,10 +813,18 @@ class Bot:
 
     # -- 층, 판 ---------------------------------------------------------------
     def run_floor(self, timeout: float = 420) -> str:
-        """한 층을 끝까지. 'next_floor' 또는 'restart'를 돌려준다."""
-        end = time.monotonic() + timeout
+        """한 층을 끝까지. 'next_floor' 또는 'restart'를 돌려준다.
+        650원을 이긴 판은 층 하나에서 늦어지는 게 판을 버리는 것보다 나아서 더 기다린다."""
+        start = time.monotonic()
+        warned = False
         last_state = None
-        while time.monotonic() < end:
+        while True:
+            el = time.monotonic() - start
+            if el > timeout * (1.7 if self.gamble_won else 1.0):
+                break
+            if el > 180 and not warned:
+                warned = True
+                self.log("층", f"이 층에서 3분째 ({'650원 이긴 판이라 12분까지' if self.gamble_won else '7분까지'} 기다림)")
             img = self.grab()
             d = self.stable.update(img)
             s = d.state

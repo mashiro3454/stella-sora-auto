@@ -329,6 +329,7 @@ class Navigator:
         held_since = t0
         lost = 0
         blocks = 0
+        stuck_at: deque = deque(maxlen=6)  # 막힌 자리들 (같은 자리에서 또 막히면 억지로 적고, 세 번이면 빠져나온다)
         last_goal_kind = ""
         last_goal_log = 0.0
         at_door_since: float | None = None
@@ -385,13 +386,25 @@ class Navigator:
                     ux, uy = math.cos(math.radians(ang)), -math.sin(math.radians(ang))
                     moved = (pos[0] - hist[0][1][0]) * ux + (pos[1] - hist[0][1][1]) * uy
                     if moved < BLOCK_MIN_MOVE:
-                        # 앞 칸과 그 양옆 칸 (벽은 대개 옆으로 이어진다)
-                        fx, fy = pos[0] + ux * CELL, pos[1] + uy * CELL
-                        c = self.map.block((fx, fy))
-                        for side in (-1, 1):
-                            self.map.block((fx - uy * CELL * side, fy + ux * CELL * side))
+                        # 앞 칸과 그 양옆 칸 (벽은 대개 옆으로 이어진다).
+                        # 대각선으로 48px 앞은 지금 칸과 같을 수 있어서 지금 칸을 벗어날 때까지 앞으로 본다
+                        # (8층 술통 벽에서 앞 칸이 늘 지금 칸이라 못 적고 4분 동안 같은 쪽으로 밀었다)
+                        here = to_cell(pos)
+                        d = CELL
+                        while to_cell((pos[0] + ux * d, pos[1] + uy * d)) == here and d < CELL * 2:
+                            d += CELL / 4
+                        fx, fy = pos[0] + ux * d, pos[1] + uy * d
+                        again = any(math.hypot(pos[0] - p[0], pos[1] - p[1]) < 60 for p in stuck_at)
+                        c = self.map.block((fx, fy), force=again)
+                        if c is not None:
+                            # 또 막혔으면 옆 칸도 억지로: 위치 재기가 조금 틀어져 벽 칸을 '서 본 칸'으로 적었을 수 있다
+                            # (가짜 게임에서 대각선 길이 그 칸을 지나가서 키는 d인데 계속 벽으로 밀었다)
+                            for side in (-1, 1):
+                                self.map.block((fx - uy * CELL * side, fy + ux * CELL * side), force=again)
+                        stuck_at.append(pos)
                         blocks += 1
-                        self.log("이동", f"{'+'.join(held)} 쪽이 막힘 ({moved:.0f}px), 칸 {c} 막힌 칸으로 적음")
+                        self.log("이동", f"{'+'.join(held)} 쪽이 막힘 ({moved:.0f}px), 칸 {c} 막힌 칸으로 적음"
+                                       + (" (같은 자리에서 또 막혀서 억지로)" if again and c is not None else ""))
                         held = ()
                         self.gi.set_held(())
                         held_since = now

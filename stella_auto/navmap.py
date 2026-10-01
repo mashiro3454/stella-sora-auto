@@ -49,13 +49,22 @@ class NavMap:
         self.blocked.pop(c, None)
         self.soft.pop(c, None)
 
-    def block(self, p: tuple[float, float]) -> Cell | None:
+    def block(self, p: tuple[float, float], force: bool = False) -> Cell | None:
         c = to_cell(p)
-        if c in self.free and self.visits.get(c, 0) >= 2:
-            return None  # 여러 번 서 본 칸은 막혔다고 하지 않는다
+        if not force and c in self.free and self.visits.get(c, 0) >= 2:
+            return None  # 여러 번 서 본 칸은 막혔다고 하지 않는다 (같은 자리에서 또 막히면 force로 막는다)
         self.blocked[c] = self.blocked.get(c, 0) + 1
         self.free.discard(c)
         return c
+
+    def forget_blocks(self) -> int:
+        """이번에 막혔다고 적은 칸을 전부 '전에 막혔던 칸'(비싸지만 지나갈 수 있음)으로 돌린다.
+        잘못 적은 막힌 칸 때문에 길이 없어져 엉뚱한 구석으로 갈 때 처음부터 다시 찾게 한다."""
+        n = len(self.blocked)
+        for c, k in self.blocked.items():
+            self.soft[c] = max(self.soft.get(c, 0), k)
+        self.blocked.clear()
+        return n
 
     def is_avoided(self, c: Cell) -> bool:
         x, y = cell_center(c)

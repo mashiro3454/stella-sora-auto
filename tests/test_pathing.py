@@ -184,6 +184,28 @@ def test_walk_marks_wall_and_goes_around(tmp_path):
     assert world.pos[0] > 2000
 
 
+def test_corner_with_visited_cells_is_escaped(tmp_path):
+    # 8층 술통 벽: 왼쪽 위 구석에 끼여 w+a를 누르는데, 앞 칸이 지금 칸이거나 여러 번 서 본 칸이라
+    # 막힌 칸으로 못 적고 4분 동안 같은 쪽으로 밀었다. 같은 자리에서 또 막히면 억지로 적고 돌아가야 한다
+    walls = [(1150, 1640, 1700, 1700), (1340, 1640, 1400, 2100)]  # 위쪽 가로 벽 + 왼쪽 세로 벽 (구석)
+    world = FakeWorld(walls, (1500, 1800))
+    nav = make_nav(world, tmp_path)
+    off = (nav.last_pos[0] - 1500, nav.last_pos[1] - 1800)  # 가짜 세계 -> 봇 월드 좌표
+    for wx in range(1400, 1700, 24):  # 벽 앞 줄은 여러 번 서 본 칸
+        for wy in range(1700, 1790, 24):
+            c = to_cell((wx + off[0], wy + off[1]))
+            nav.map.free.add(c)
+            nav.map.visits[c] = 3
+    goal = (1250 + off[0], 1450 + off[1])  # 벽 너머 왼쪽 위: 오른쪽으로 돌아가야 한다
+    res = None
+    for _ in range(8):
+        res = nav.walk(lambda im, ch, p: Goal(goal, "test", arrive=90), lambda im: False, max_sec=12)
+        if res.reason == "arrived":
+            break
+    assert res.reason == "arrived", res
+    assert world.pos[1] < 1640
+
+
 def test_room_entry_is_first_frame_after_loading(tmp_path):
     # 로딩 뒤 첫 필드 화면이 입구. 방 제목은 조금 늦게 읽혀도 좌표는 입구 기준으로 이어진다
     world = FakeWorld([], (1500, 1800))
