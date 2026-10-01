@@ -140,3 +140,21 @@ def test_upgrade_value_uses_card_level_when_owned_unknown(chooser):
     # 봇을 중간에 켜서 owned가 비어 있어도 "3>4"는 +1로 친다
     v, _ = chooser.value(card("숲속 공주의 은총", 4, 3), RunState(floor=5), ignore_floor=True)
     assert v == 100
+
+
+def test_no_reroll_restart_after_gamble_win(chooser):
+    # 6층에 프리셋에 없거나 19층부터인 카드만: 원래는 재시작, 650원 이긴 판은 리롤을 더 하고 그다음 덜 나쁜 것
+    bad = cards(("무영 사냥꾼", 1), ("가속 돌파", 3), ("칼날의 춤사위", 3))
+    st = RunState(floor=6, gold=2000, rerolls_early=12, rerolls_this_pick=5, keep_after_gamble=True)
+    assert chooser.choose(bad, st).action == "reroll"
+    st.rerolls_this_pick = 8
+    assert chooser.choose(bad, st).action == "pick"
+    st.keep_after_gamble = False
+    assert chooser.choose(bad, st).action == "restart"
+
+
+def test_fallback_never_takes_main_lv1(chooser):
+    bad = cards(("관통 탄도", 1), ("무영 사냥꾼", 1), ("과열 사격", 3) if "과열 사격" in BY_NAME else ("가속 돌파", 1))
+    st = RunState(floor=6, gold=0, rerolls_this_pick=8, keep_after_gamble=True)
+    d = chooser.choose(bad, st)
+    assert d.action == "pick" and d.card.potential.name != "관통 탄도"

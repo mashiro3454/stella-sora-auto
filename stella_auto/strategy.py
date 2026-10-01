@@ -16,6 +16,7 @@ LV3_LIMIT = 10  # 한 판에 새 잠재력 Lv3 카드는 10번까지
 REROLL_COST = 40
 MAX_REROLLS_PER_PICK = 5  # 한 번의 카드 선택에서 연속 5번 이상 리롤하면 재시작
 MAX_REROLLS_EARLY = 10  # 6층까지 리롤이 10번을 넘으면 재시작
+MAX_REROLLS_KEEP = 8  # 650원 이긴 판(재시작 안 함): 한 선택에서 리롤은 이만큼까지, 그 뒤엔 덜 나쁜 것
 EARLY_FLOOR = 6
 ESSENTIAL_SAFEGUARD_FLOOR = 13  # 이 층부터 아직 없는 필수는 Lv2 이상이면 먼저 집는다
 SAFEGUARD_BONUS = 1000
@@ -31,6 +32,9 @@ class RunState:
     lv2_new_taken: int = 0
     rerolls_early: int = 0  # 6층까지 한 리롤 수
     rerolls_this_pick: int = 0
+    # 시험 (2026-10-02 밤): 650원 도박에 이긴 판은 리롤 횟수로 재시작하지 않는다. 이긴 판 둘이 6층에서
+    # "리롤 10번", "한 선택에서 리롤 5번"으로 끝났다 (리롤 대상은 프리셋에 없거나 13/19층부터인 카드였다)
+    keep_after_gamble: bool = False
 
 
 @dataclass
@@ -115,15 +119,23 @@ class CardChooser:
         if ok:
             best = max(ok, key=lambda c: (vals[c.slot][0], self._tiebreak(c)))
             return Decision("pick", best, f"{best.potential.name}: {vals[best.slot][1]} +{vals[best.slot][0]:.0f}", values)
-        if state.rerolls_this_pick >= MAX_REROLLS_PER_PICK:
+        if state.keep_after_gamble:
+            if state.rerolls_this_pick >= MAX_REROLLS_KEEP:
+                can_reroll = False  # 아래에서 덜 나쁜 것을 고른다
+        elif state.rerolls_this_pick >= MAX_REROLLS_PER_PICK:
             return Decision("restart", None, f"한 선택에서 리롤 {state.rerolls_this_pick}번", values)
-        if state.floor <= EARLY_FLOOR and state.rerolls_early >= MAX_REROLLS_EARLY:
+        elif state.floor <= EARLY_FLOOR and state.rerolls_early >= MAX_REROLLS_EARLY:
             return Decision("restart", None, f"{EARLY_FLOOR}층까지 리롤 {state.rerolls_early}번", values)
         if can_reroll and state.gold >= REROLL_COST:
             return Decision("reroll", None, "고를 카드가 없음", values)
-        # 리롤도 못 하면: 프리셋에 있는 카드 중 점수 높은 것, 그것도 없으면 첫 카드
-        fallback = [c for c in cards if c.potential and c.potential.id in self.goals]
-        pick = max(fallback, key=lambda c: self.value(c, state, ignore_floor=True)[0] or 0) if fallback else cards[0]
+        # 리롤도 못 하면: 프리셋에 있는 카드 중 점수 높은 것, 그것도 없으면 첫 카드.
+        # 단 필수/다다익선의 새 Lv1은 절대 안 집는다 (사용자 규칙) — 차라리 프리셋에 없는 카드
+        def main_lv1(c: Card) -> bool:
+            g = self.goals.get(c.potential.id) if c.potential else None
+            return bool(c.is_new and c.level_to <= 1 and g and g.mark in ("필수", "다다익선"))
+        allowed = [c for c in cards if not main_lv1(c)] or cards
+        fallback = [c for c in allowed if c.potential and c.potential.id in self.goals]
+        pick = max(fallback, key=lambda c: self.value(c, state, ignore_floor=True)[0] or 0) if fallback else allowed[0]
         return Decision("pick", pick, "리롤 못 함, 덜 나쁜 것", values)
 
     def choose_enhance(self, cards: list[Card], state: RunState) -> Decision:

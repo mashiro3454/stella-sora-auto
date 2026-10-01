@@ -549,6 +549,7 @@ class Bot:
             if won is not None or time.monotonic() - self._gamble_at > 12:
                 won = bool(won) if won is not None else True  # 끝까지 모르면 이어 간다 (잘못 재시작하면 이긴 판을 버린다)
                 self.gamble_won = self.gamble_won or won
+                self.run.keep_after_gamble = self.gamble_won
                 self.log("650원", f"{'성공' if won else '실패'} ({why})", img)
                 if self.run_tracked:
                     self.save_state()
@@ -1003,6 +1004,7 @@ class Bot:
         self.run.lv2_new_taken = d["lv2_new_taken"]
         self.run.rerolls_early = d["rerolls_early"]
         self.gamble_won = d["gamble_won"]
+        self.run.keep_after_gamble = self.gamble_won
         self.run_tracked = True
         self.log("시작", f"저장해 둔 판 상태를 이어받음 ({d['floor']}층, 잠재 {len(self.run.owned)}개, "
                        f"650원 {'성공' if self.gamble_won else '아직'})")
