@@ -9,7 +9,7 @@
 
 ```bash
 python -m venv C:\Users\masir\.venvs\stella-sora-auto
-C:\Users\masir\.venvs\stella-sora-auto\Scripts\python -m pip install -r requirements-dev.txt
+C:\Users\masir\.venvs\stella-sora-auto\Scripts\python -m pip install -r requirements.txt -r requirements-dev.txt
 ```
 
 ## 프리셋 (sstoy 공유 링크)
@@ -35,6 +35,20 @@ python -m stella_auto.preset "<링크>" -o presets/내빌드.json
 ```bash
 python tools/update_gamedata.py
 ```
+
+## 게임 화면 캡처
+
+```bash
+python -m stella_auto.capture                 # 창 정보 출력 + captures/에 한 장 저장
+python -m stella_auto.capture --every 2 -n 30 # 2초마다 30장
+```
+
+게임 창(StellaSora.exe)을 찾아서 게임 화면(클라이언트 영역)만 찍는다. 기본 방식(PrintWindow)은
+다른 창에 가려져도 게임 화면이 찍힌다. 최소화돼 있으면 못 찍는다.
+
+## 도자기 점수
+
+규칙은 [docs/tower-rules.md](docs/tower-rules.md), 코드는 `stella_auto/score.py`.
 
 ## 테스트
 
