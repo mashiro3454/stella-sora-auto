@@ -207,18 +207,21 @@ class Bot:
             time.sleep(0.2)
         if golds and before is not None:
             # 이기면 +650, 지면 -200 근처여야 한다. 코인 그림을 숫자로 읽어 480을 "7480"으로 본 적이 있어서
-            # (06:03 진 판을 이긴 판으로 셈) 말이 안 되는 변화는 앞자리를 떼어 본다
-            def cands(v: int) -> list[int]:
-                return [v] + ([int(str(v)[1:])] if len(str(v)) >= 3 else [])
+            # (06:03 진 판을 이긴 판으로 셈) 말이 안 되는 변화는 앞자리를 떼어 본다.
+            # 맨 앞 1을 4로 읽기도 한다 (07:49 1180 -> "4180"). 도박 순간엔 다른 돈 변화가 없어서 +650/-200에 딱 맞춘다
+            def cands(v: int, one: bool = False) -> list[int]:
+                s = str(v)
+                out = [v] + ([int(s[1:])] if len(s) >= 3 else [])
+                return out + ([int("1" + s[1:])] if one and len(s) >= 4 and s[0] != "1" else [])
 
             for b in cands(before):
                 for g in sorted(golds, reverse=True):
-                    for after in cands(g):
+                    for after in cands(g, one=True):
                         diff = after - b
                         note = f"돈 {b} -> {after}" + (f" (읽은 값 {before} -> {g})" if (b, after) != (before, g) else "")
-                        if 550 <= diff <= 800:
+                        if 600 <= diff <= 700:
                             return True, note
-                        if -260 <= diff <= -150:
+                        if -250 <= diff <= -150:
                             return False, note
         return None, f"아직 모름 (돈 {before} -> {golds})"
 

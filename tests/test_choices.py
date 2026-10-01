@@ -166,3 +166,9 @@ def test_unknown_gamble_rechecked_on_card_screen():
         b.log = lambda *a, **k: None
         b.verify_gamble(gold)
         assert b.gamble_won is won and bool(b.restart_pending) is (not won) and b._gamble_verify is None
+
+
+def test_gamble_gold_leading_one_read_as_four():
+    # 07:49: 1180을 "4180"으로 읽어 결과를 몰랐다
+    assert _judge(530, [4180, 4180, 4180])[0] is True
+    assert _judge(530, [4330, 4330, 4330])[0] is False  # 코인 그림 + 330 (진 판)
