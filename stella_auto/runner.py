@@ -311,6 +311,8 @@ class Bot:
         self.trade_tick = 0
         self.floor_changed_at = time.monotonic()
         self.loading_at = None
+        if self.floor_uncertain and floor <= GAMBLE_LAST_FLOOR:
+            self.run_tracked = True  # 층을 몰랐다가 1~3층으로 밝혀짐: 650원 도박 규칙을 다시 쓴다
         self.run.floor = floor
         self.floor_known = True
         self.floor_uncertain = False
@@ -898,10 +900,16 @@ class Bot:
             self.gi.key("esc")
             time.sleep(1.0)
             img = self.grab()
-            if self.det.detect(img).state != "esc_map":
-                continue
+            st = self.det.detect(img).state
+            if st != "esc_map":
+                self.log("층", f"ESC를 눌렀는데 지도가 아니라 {st} 화면 ({attempt + 1}/3)", img)
+                if st == "field":
+                    continue
+                return  # 다른 화면 (메뉴 등): 그 화면부터 처리하고 다음에 다시
             text = self.ocr.text(img, (600, 60, 1300, 1020)).replace(" ", "")
             m = TITLE_FLOOR_RE.search(text)
+            if not m:
+                self.log("층", f"지도 글자에서 층을 못 찾음: {text[:60]!r} ({attempt + 1}/3)", img)
             self.gi.key("esc")
             time.sleep(0.6)
             if m:
