@@ -83,6 +83,7 @@ class Navigator:
         self.entry_img: np.ndarray | None = None
         self.door_seen: tuple[float, float] | None = None  # 이번에 본 출구 문양 자리
         self.door_candidate: tuple[float, float] | None = None  # 한 번 본 문양 자리 (한 번 더 보면 믿는다)
+        self.false_doors: list[tuple[float, float]] = []  # 가 봤는데 문이 아니었던 자리 (이 방에서만)
         self.memory_exit: tuple[float, float] | None = None
         self.marker_goal: tuple[float, float] | None = None
         self.marker_goal_at = 0.0
@@ -119,6 +120,7 @@ class Navigator:
         self.room = None
         self.door_seen = None
         self.door_candidate = None
+        self.false_doors = []
         self.memory_exit = None
         self.marker_goal = None
         self.explore_last = None
@@ -243,7 +245,7 @@ class Navigator:
             return Goal(self.marker_goal, "marker")
         hue = nv.DOOR_HUE.get(self.next_kind, (None, 0))[0]
         door = nv.find_exit_door(img, char, hue)
-        if door and nv.door_matches(door, self.next_kind):
+        if door and nv.door_matches(door, self.next_kind) and not self._is_false_door(self.odo.to_world(door.center)):
             w = self.odo.to_world(door.center)
             # 같은 자리(월드 좌표)에서 두 번 보여야 문으로 믿는다 (한 번 우연히 잡힌 무늬에 끌려가지 않게)
             c = self.door_candidate
@@ -277,6 +279,18 @@ class Navigator:
             return []
         return [(float(x), float(y)) for x, y, k in self.room.npcs if k == kind]
 
+    def _is_false_door(self, w: tuple[float, float]) -> bool:
+        return any(math.hypot(w[0] - f[0], w[1] - f[1]) < 200 for f in self.false_doors)
+
+    def mark_false_door(self, w: tuple[float, float], kind: str) -> None:
+        """그 자리에 가 봤는데 로딩이 안 됐다: 문이 아니다 (11층에서 문 아닌 무늬 앞에서 계속 서성였다)."""
+        self.false_doors.append(w)
+        if kind == "memory":
+            self.memory_exit = None  # 이번엔 기억한 출구가 틀렸다 (지도를 잘못 알아봤을 수 있다)
+        self.door_seen = None
+        self.door_candidate = None
+        self.log("이동", f"({w[0]:.0f}, {w[1]:.0f})에 가 봤는데 출구가 아님, 앞으로 무시")
+
     def known_exit(self) -> tuple[float, float] | None:
         return self.door_seen or self.memory_exit
 
@@ -297,6 +311,7 @@ class Navigator:
         blocks = 0
         last_goal_kind = ""
         last_goal_log = 0.0
+        at_door_since: float | None = None
         try:
             while True:
                 now = time.monotonic()
@@ -324,6 +339,15 @@ class Navigator:
                 d = math.hypot(goal.pos[0] - pos[0], goal.pos[1] - pos[1])
                 if goal.arrive and d < goal.arrive:
                     return NavResult("arrived", now - t0)
+                if goal.kind in ("door", "seen", "memory"):
+                    if d < 90:
+                        if at_door_since is None:
+                            at_door_since = now
+                        elif now - at_door_since > 3.0:  # 문 자리에 3초 넘게 있었는데 로딩이 안 된다
+                            self.mark_false_door(goal.pos, goal.kind)
+                            return NavResult("false_door", now - t0)
+                    else:
+                        at_door_since = None
                 if d < best_d - 40:
                     best_d, best_t = d, now
                 elif now - best_t > NO_PROGRESS_SEC:
