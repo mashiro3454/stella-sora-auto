@@ -79,6 +79,12 @@ def _mouse_input(flags: int) -> INPUT:
     return INPUT(INPUT_MOUSE, _INPUTUNION(mi=MOUSEINPUT(0, 0, 0, flags, 0, None)))
 
 
+def release_all_keys() -> None:
+    """봇이 누를 수 있는 키를 전부 뗀다 (비상 정지, 강제 종료 뒤 정리용)."""
+    _send(*(_key_input(s, up=True) for s in SCANCODES.values()))
+    _send(_mouse_input(MOUSEEVENTF_LEFTUP))
+
+
 class GameInput:
     def __init__(self, focus_timeout: float = 2.0):
         self.focus_timeout = focus_timeout

@@ -26,7 +26,8 @@ from . import navigate as nv
 from .capture import capture, find_game_window, restore
 from .cards import read_cards, team_pool
 from .gamedata import default_gamedata
-from .input import GameInput, NotFocusedError
+from . import killswitch
+from .input import GameInput, NotFocusedError, release_all_keys
 from .ocr import KoreanOcr
 from .preset import Preset
 from .screen import ScreenDetector, StableDetector
@@ -87,9 +88,7 @@ class Bot:
 
     # -- 기본 ---------------------------------------------------------------
     def check_stop(self) -> None:
-        if ctypes.windll.user32.GetAsyncKeyState(VK_F12) & 0x8000:
-            self.gi.release_all()
-            raise Stop("F12")
+        pass  # F12는 killswitch 스레드가 따로 지켜보다가 바로 끈다
 
     def grab(self) -> np.ndarray:
         self.check_stop()
@@ -545,7 +544,7 @@ def main(argv: list[str] | None = None) -> int:
     # 봇은 한 번에 하나만. 두 개가 같이 돌면 서로 키를 눌러서 엉망이 된다
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateMutexW.restype = ctypes.c_void_p
-    mutex = kernel32.CreateMutexW(None, True, "Local\stella_auto_runner")
+    mutex = kernel32.CreateMutexW(None, True, r"Local\stella_auto_runner")
     if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
         print("봇이 이미 돌고 있음. 먼저 그걸 멈춰줘 (F12)", file=sys.stderr)
         return 1
@@ -553,6 +552,14 @@ def main(argv: list[str] | None = None) -> int:
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     pid_file.write_text(str(os.getpid()))
     bot = Bot(Preset.load(args.preset))
+
+    def emergency_stop() -> None:
+        # 메인 스레드가 키를 누르는 중일 수 있으니, 누를 수 있는 키를 전부 뗀다
+        release_all_keys()
+        pid_file.unlink(missing_ok=True)
+        bot.log("멈춤", "F12 (즉시)")
+
+    killswitch.start(emergency_stop)
     try:
         bot.play(args.floors)
     except Stop as e:
