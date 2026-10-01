@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import math
 import os
 import re
 import sys
@@ -31,6 +32,7 @@ from .gamedata import default_gamedata
 from . import killswitch
 from .input import GameInput, NotFocusedError, release_all_keys
 from .ocr import KoreanOcr
+from .pathing import Goal, Navigator
 from .preset import Preset
 from .screen import ScreenDetector, StableDetector
 from .strategy import CardChooser, RunState
@@ -82,10 +84,8 @@ class Bot:
         self.chooser = CardChooser(preset)
         self.pool = team_pool(preset)
         self.run = RunState()
-        self.exit_angle: float | None = None  # 이 층에서 마지막으로 본 출구 방향
-        self.blind_walks = 0  # 출구가 안 보일 때 마지막 방향으로 간 횟수
+        self.nav = Navigator(self.gi, self.grab, lambda kind, msg: self.log(kind, msg))
         self.idle_since: float | None = None  # 출구를 못 찾기 시작한 때
-        self.explore_i = 0
         self.room = ""  # 이 층 방 종류 (전투/선택/강적/거래/리더)
         self.talked: set[str] = set()  # 이 층에서 말 건 NPC 이름
         self.title_seen = 0.0  # 방 제목을 마지막으로 본 때
@@ -224,6 +224,7 @@ class Bot:
         time.sleep(1.0)
 
     def saw_loading(self) -> None:
+        self.nav.loading_seen()  # 문에 들어갔으면 그 자리를 출구로 기억, 다음 필드 화면이 새 방 입구
         if self.floor_known and self.loading_at is None:
             self.loading_at = time.monotonic()
 
@@ -252,11 +253,9 @@ class Bot:
         self._last_cards = None
         self.room = room
         self.talked = set()
-        self.exit_angle = None
         self.idle_since = None
-        self.explore_i = 0
-        self.blind_walks = 0
         self.log("층", f"{floor}층 {room + '의 방' if room else ''}")
+        self.nav.new_room(floor, room, ROOM_BY_FLOOR.get(floor + 1, ""))
 
     def check_title(self, img: np.ndarray) -> bool:
         """방 제목을 읽어 층이 바뀌었는지 본다. 새 층이면 True."""
@@ -316,6 +315,8 @@ class Bot:
                 continue  # 이름 위의 초록 글자는 NPC 종류("사건", "회복", "상점")지 이름이 아니다
             if process.extractOne(t, self.not_npc, scorer=fuzz.ratio, score_cutoff=75):
                 continue  # 전투 중 뜨는 스킬 이름 ("무장 습격" 등)
+            if white_fraction(img, l.box) < 0.08:
+                continue  # NPC 이름은 흰 글자 (실제 이름표 0.14~0.40). 바닥 무늬를 "수숗그"로 읽은 일이 있었다
             # 이름 바로 위의 초록 글자가 NPC 종류. OCR이 "회복"을 "화복"으로 읽기도 해서 비슷하게 맞춘다
             kind = next((o.text.replace(" ", "") for o in lines
                          if o is not l and 0 < y - o.box[1] < 80 and abs(o.box[0] + o.box[2] / 2 - (x + w / 2)) < 60
@@ -424,8 +425,13 @@ class Bot:
             self.read_floor_from_map()
             return None
         char = nv.find_character(img)
+        pos = self.nav.observe(img, char)  # 방 안 위치 (처음 보는 화면이면 어떤 지도인지도 알아본다)
+        if self.loading_at is not None:
+            # 로딩을 지나 새 방에 왔는데 아직 방 제목을 못 읽었다. 지난 방 기준으로 움직이지 않고 제목을 기다린다
+            time.sleep(0.15)
+            return None
         if char is None:
-            time.sleep(0.3)
+            time.sleep(0.2)
             return None
         now = time.monotonic()
 
@@ -451,8 +457,13 @@ class Bot:
                 self.log("NPC", f"{name}에게 F로 말 걸기", img)
                 self.gi.key("f")
                 time.sleep(1.0)
-                if self.det.detect(self.grab()).state == "field":
+                after = self.grab()
+                if self.det.detect(after).state == "field":
                     self.log("NPC", f"{name}: 대화가 안 열림 (이미 끝난 이벤트일 수 있음)")
+                    # 이름을 다르게 읽어("베아틔원"/"베아트리스") 같은 NPC에게 또 가지 않게, 근처 이름표를 다 말 건 것으로
+                    for other, (bx, by, bw, bh), _ in self.npc_labels(after):
+                        if abs(bx + bw / 2 - char[0]) < 250 and abs(by - char[1]) < 300:
+                            self.talked.add(other)
                 return None
 
         # 1-1) 거래의 방: 강화머신("강화" 초록 글자) 쪽으로 먼저 간다 (거래의 방은 매번 찾는다)
@@ -461,12 +472,9 @@ class Bot:
             if box:
                 x, y, w, h = box
                 self.log("강화", f"강화머신 쪽으로 걸어감 ({x + w // 2}, {y + h // 2})", img)
-                tracker = nv.TemplateTracker(img, (x - 4, y - 4, x + w + 4, y + h + 4), threshold=0.5)
-                res = nv.walk_toward(lambda k, sec: self.gi.hold(list(k), sec), self.grab,
-                                     lambda im, ch: (lambda c: (c[0], c[1] + 90) if c else None)(tracker.update(im)),
-                                     stop=lambda im: self.walk_stop(im) or nv.find_prompt(im) == "enhance",
-                                     arrive_dist=50, max_steps=30)
-                self.log("강화", f"걷기 결과 {res.reason} ({res.steps}걸음)")
+                res = self.nav.walk(self.label_goal(img, box, 90), self.stop_for("enhance"), max_sec=15,
+                                    avoid_exit=True, why="강화머신")
+                self.log("강화", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
                 if nv.find_prompt(self.grab()) != "enhance":
                     self.nudge_until("enhance")
                 return None
@@ -477,14 +485,12 @@ class Bot:
             shop_ok = self.room == "거래" and not self.shop_done and not self.want_enhance(img)
             todo = [lb for lb in self.npc_labels(img) if not self.already_talked(lb[0]) and (not lb[2] or shop_ok)]
             if todo:
-                name, (x, y, w, h), _ = min(todo, key=lambda lb: abs(lb[1][0] - char[0]) + abs(lb[1][1] - char[1]))
+                name, box, _ = min(todo, key=lambda lb: abs(lb[1][0] - char[0]) + abs(lb[1][1] - char[1]))
+                x, y, w, h = box
                 self.log("NPC", f"{name} 쪽으로 걸어감 ({x + w // 2}, {y + h // 2})", img)
-                tracker = nv.TemplateTracker(img, (x - 4, y - 4, x + w + 4, y + h + 4), threshold=0.5)
-                res = nv.walk_toward(lambda k, sec: self.gi.hold(list(k), sec), self.grab,
-                                     lambda im, ch: tracker.update(im),
-                                     stop=lambda im: self.walk_stop(im, talk=True),
-                                     arrive_dist=50, max_steps=30)
-                self.log("NPC", f"걷기 결과 {res.reason} ({res.steps}걸음)")
+                res = self.nav.walk(self.label_goal(img, box, 60), self.stop_for("talk"), max_sec=15,
+                                    avoid_exit=True, why=f"NPC {name}")
+                self.log("NPC", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
                 if res.reason != "stopped":
                     self.talked.add(name)  # 못 가면 이 NPC는 포기 (무한 반복 방지)
                 return None
@@ -494,13 +500,9 @@ class Bot:
             npc = next((m for m in nv.find_markers(img, char) if m.kind == "npc"), None)
             if npc:
                 self.log("NPC", "물음표 표시를 따라감", img)
-                res = nv.walk_toward(
-                    lambda k, sec: self.gi.hold(list(k), sec), self.grab,
-                    lambda im, ch: (lambda m: nv.marker_target(m, ch) if m else None)(
-                        next((m for m in nv.find_markers(im, ch) if m.kind == "npc"), None)),
-                    stop=lambda im: self.walk_stop(im, talk=True), arrive_dist=0, max_steps=25,
-                    initial_angle=nv.angle_of(*(np.subtract(nv.marker_target(npc, char), char))))
-                self.log("NPC", f"표시 따라가기 결과 {res.reason} ({res.steps}걸음)")
+                res = self.nav.walk(self.marker_goal("npc"), self.stop_for("talk"), max_sec=15,
+                                    avoid_exit=True, why="NPC 표시")
+                self.log("NPC", f"표시 따라가기 결과 {res.reason} ({res.secs:.0f}초)")
                 self.npc_scanned = 0.0  # NPC가 화면에 들어왔을 테니 바로 이름표를 찾는다
                 return None
 
@@ -523,7 +525,7 @@ class Bot:
         if not self.combat_done:
             limit = COMBAT_TIMEOUT if not self.joined_midway else 40.0
             if now - self.floor_changed_at < limit:
-                time.sleep(0.4)
+                time.sleep(0.15)  # 자동 전투로 캐릭터가 움직이니 위치를 자주 잰다
                 return None
             self.combat_done = True
             self.log("전투", f"{limit:.0f}초 동안 소리 획득을 못 봄, 전투가 끝난 것으로 보고 진행", img)
@@ -535,28 +537,19 @@ class Bot:
 
         # 방 제목이 떠 있는 동안은 제목 글자(ㅇ)를 출구 문양으로 착각할 수 있어서 기다린다
         if now - self.title_seen < 2.5:
-            time.sleep(0.3)
+            time.sleep(0.2)
             return None
 
-        target = nv.exit_target(img, char)
-        if target is None:
+        goal = self.nav.exit_goal(img, char, pos)
+        if goal is None:
             if self.idle_since is None:
                 self.idle_since = now
-            if now - self.idle_since < 4:
-                time.sleep(0.4)  # 아직 전투 중이거나 출구가 안 열렸을 수 있다
+            if now - self.idle_since < 3:
+                time.sleep(0.3)  # 아직 전투 중이거나 출구가 안 열렸을 수 있다
                 return None
-            if self.exit_angle is not None and self.blind_walks < 3:
-                self.blind_walks += 1
-                self.log("이동", f"출구가 안 보임, 마지막으로 본 방향({self.exit_angle:+.0f}도)으로 감 ({self.blind_walks}/3)")
-                self.gi.hold(list(nv.keys_for_angle(self.exit_angle)), 1.2)
-            else:  # 그 방향이 막혔거나 본 적이 없으면 사방을 둘러본다
-                self.exit_angle = None
-                self._explore("출구를 찾으려고 둘러봄")
-            self.idle_since = now - 2
+            self._explore("출구를 찾으려고 둘러봄")
             return None
-        self.exit_angle = nv.angle_of(target[0] - char[0], target[1] - char[1])
         self.idle_since = None
-        self.blind_walks = 0
         if self.exit_seen_at is None:
             self.exit_seen_at = now
         if self.require_gamble and not self.gamble_won and self.run.floor >= GAMBLE_LAST_FLOOR:
@@ -566,38 +559,53 @@ class Bot:
                 return None
             self.restart_pending = f"{GAMBLE_LAST_FLOOR}층까지 650원 선택지를 못 받음"
             return "restart"
-        self.log("이동", f"출구로 걸어감 {tuple(round(v) for v in target)}", img)
-
-        def tgt(im: np.ndarray, ch: tuple[float, float]) -> tuple[float, float] | None:
-            t = nv.exit_target(im, ch)
-            if t is not None:
-                self.exit_angle = nv.angle_of(t[0] - ch[0], t[1] - ch[1])
-            return t
-
-        res = nv.walk_toward(lambda k, sec: self.gi.hold(list(k), sec), self.grab, tgt,
-                             stop=self.walk_stop, arrive_dist=0, max_steps=45, initial_angle=self.exit_angle)
-        self.log("이동", f"걷기 결과 {res.reason} ({res.steps}걸음)")
+        self.log("이동", f"출구로 감: {goal.kind} ({goal.pos[0]:.0f}, {goal.pos[1]:.0f}), 지금 ({pos[0]:.0f}, {pos[1]:.0f})", img)
+        res = self.nav.walk(self.nav.exit_goal, self.walk_stop, max_sec=45, why="출구")
+        self.log("이동", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
         return None
 
+    # -- 걷기 도우미 -------------------------------------------------------------
+    def stop_for(self, prompt: str):
+        """걷다가 멈출 때: 필드가 아니게 됐거나 원하는 상호작용 표시("talk"/"enhance")가 떴을 때."""
+        return lambda im: self.walk_stop(im) or nv.find_prompt(im) == prompt
+
+    def label_goal(self, img: np.ndarray, box: tuple[int, int, int, int], below: int):
+        """화면의 이름표(NPC, 강화머신)를 따라가는 목표. 이름표 아래 below px쯤이 그 물건의 발밑."""
+        x, y, w, h = box
+        tracker = nv.TemplateTracker(img, (x - 4, y - 4, x + w + 4, y + h + 4), threshold=0.5)
+        last = [self.nav.odo.to_world((x + w / 2, y + h / 2 + below))]
+
+        def fn(im: np.ndarray, ch: tuple[float, float], p: tuple[float, float]) -> Goal | None:
+            c = tracker.update(im)
+            if c is not None:
+                last[0] = self.nav.odo.to_world((c[0], c[1] + below))
+            return Goal(last[0], "label", arrive=50)
+
+        return fn
+
+    def marker_goal(self, kind: str):
+        """화면 가장자리 표시(kind: "npc"/"exit") 방향으로 멀리. 표시가 사라지면 목표 없음."""
+        def fn(im: np.ndarray, ch: tuple[float, float], p: tuple[float, float]) -> Goal | None:
+            m = next((m for m in nv.find_markers(im, ch) if m.kind == kind), None)
+            if m is None:
+                return None
+            ang = math.radians(nv.angle_of(m.icon[0] - 960, m.icon[1] - 540))
+            c = self.nav.odo.to_world((960, 540))
+            return Goal((c[0] + math.cos(ang) * 1000, c[1] - math.sin(ang) * 1000), f"{kind}_marker")
+
+        return fn
+
     def _explore(self, why: str, avoid_exit: bool = False) -> None:
-        """사방을 돌아가며 조금씩 걸어 본다. avoid_exit이면 출구 쪽(90도 이내)으로는 안 간다
-        (아직 나가면 안 되는 방에서 둘러보다 출구 문에 들어가 버린 일이 있었다)."""
-        exit_ang = None
-        if avoid_exit:
-            img = self.grab()
-            char = nv.find_character(img)
-            t = nv.exit_target(img, char) if char else None
-            if t is not None:
-                exit_ang = nv.angle_of(t[0] - char[0], t[1] - char[1])
-        for _ in range(4):
-            ang = (90, 0, 180, -90)[self.explore_i % 4]
-            self.explore_i += 1
-            if exit_ang is None or abs((ang - exit_ang + 180) % 360 - 180) > 90:
-                break
-        else:
-            ang = exit_ang + 180
-        self.log("이동", f"{why} ({ang:+.0f}도)")
-        self.gi.hold(list(nv.keys_for_angle(ang)), 1.2)
+        """아직 안 가 본 쪽 중 막히지 않은 방향으로 조금 걷는다 (무작정 사방을 돌지 않는다).
+        avoid_exit이면 출구 쪽으로는 안 간다 (아직 나가면 안 되는 방에서 출구에 들어가 버린 일이 있었다)."""
+        # 둘러보다 새로 상호작용 표시가 뜨면 멈춘다. 이미 떠 있던 표시(말 건 NPC 옆)로는 안 멈춘다
+        # (15층에서 회복 NPC 옆에 서서 0.5초짜리 둘러보기만 반복했다)
+        before = nv.find_prompt(self.grab())
+        res = self.nav.explore(lambda im: self.walk_stop(im) or nv.find_prompt(im) not in (None, before),
+                               max_sec=2.5, avoid_exit=avoid_exit, why=why)
+        if res.reason == "no_goal":
+            self.nav.map.free.clear()  # 다 가 봤으면 걸어 본 칸 기록을 지우고 다시 둘러본다 (막힌 칸은 남김)
+            time.sleep(0.5)
 
     # -- 층, 판 ---------------------------------------------------------------
     def run_floor(self, timeout: float = 420) -> str:
@@ -704,6 +712,7 @@ class Bot:
             if m:
                 self.new_floor(int(m.group(1)), next((r for r in ROOM_NAMES if r in text), ""))
                 self.joined_midway = True  # 이 층 전투가 이미 끝났을 수 있다
+                self.nav.new_room(self.run.floor, self.room, ROOM_BY_FLOOR.get(self.run.floor + 1, ""), at_entrance=False)
             self.gi.key("esc")
             time.sleep(0.6)
         if not self.floor_known:
@@ -752,6 +761,13 @@ class Bot:
                     return
             else:
                 self.restart(self.restart_pending or "층 실패")
+
+
+def white_fraction(img: np.ndarray, box: tuple[int, int, int, int]) -> float:
+    """글자 상자 안에서 흰색(채도 낮고 밝은) 픽셀 비율."""
+    x, y, w, h = box
+    hsv = cv2.cvtColor(img[max(0, y):y + h, max(0, x):x + w], cv2.COLOR_BGR2HSV)
+    return float(((hsv[..., 1] < 50) & (hsv[..., 2] > 210)).mean()) if hsv.size else 0.0
 
 
 def is_green_text(img: np.ndarray, box: tuple[int, int, int, int]) -> bool:

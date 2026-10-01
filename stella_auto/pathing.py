@@ -1,0 +1,356 @@
+"""방 안에서 생각하며 걷기.
+
+예전 방식(목표 쪽으로 무작정 걷다가 막히면 옆으로 비키기, 안 보이면 사방 둘러보기)은 같은 벽에
+계속 박고, 책장 그림의 동그라미를 출구로 착각해 45걸음씩 헛걸었다. 이제는:
+
+1. odometry로 캐릭터가 방 안 어디 있는지 잰다 (방에 들어온 자리 기준).
+2. 걸어 본 칸과 막힌 칸을 지도(NavMap)에 적고, A*로 막힌 칸을 피해 길을 찾는다.
+   키를 누르고 있는데 그 방향으로 안 움직이면 앞 칸을 막힌 칸으로 적는다.
+3. 목표는 화면에서 본 것을 믿는다:
+   - 화면 가장자리에 출구 표시(문 아이콘)가 있으면 출구는 화면 밖이다. 표시 방향으로 간다
+     (이때 화면 안의 문양 비슷한 것은 무시한다).
+   - 표시가 없고 출구 문양이 보이면(색이 다음 방 종류와 맞아야) 그 자리로 간다.
+   - 이번에 본 출구 자리나 전에 이 지도에서 나갔던 자리를 기억해 둔다.
+4. 방을 나가면 그 지도(입구 화면), 출구 자리, 막힌 칸을 저장해 다음에 쓴다 (roommemory).
+"""
+
+from __future__ import annotations
+
+import math
+import time
+from collections import deque
+from dataclasses import dataclass
+from typing import Callable
+
+import numpy as np
+
+from . import navigate as nv
+from .navmap import CELL, NavMap, to_cell
+from .odometry import Odometry
+from .roommemory import Room, RoomMemory
+
+SCREEN_CENTER = (960.0, 540.0)
+CHAR_FALLBACK = (960.0, 555.0)  # 체력바를 못 찾으면 캐릭터는 대개 화면 가운데 (카메라가 따라감)
+TICK = 0.03
+BLOCK_WINDOW = 1.0  # 이 시간 동안
+BLOCK_MIN_MOVE = 40  # 누른 방향으로 이만큼도 못 가면 막힌 것 (걸으면 1초에 약 370px)
+KEEP_KEYS_DEG = 28  # 원하는 방향이 지금 누르는 방향과 이만큼 안쪽이면 키를 안 바꾼다 (지그재그 방지)
+NO_PROGRESS_SEC = 9.0
+EXIT_AVOID_R = 280  # 아직 나가면 안 될 때 출구 둘레 이만큼은 안 간다
+MARKER_GOAL_DIST = 1400  # 출구 표시 방향으로 이만큼 앞을 목표로 둔다
+MARKER_KEEP_SEC = 5.0  # 출구 표시가 사라져도 (문이 화면에 들어오는 중) 이만큼은 그 목표로 계속 간다
+
+
+@dataclass
+class Goal:
+    pos: tuple[float, float]  # 월드 좌표
+    kind: str  # "door", "marker", "seen", "memory", "label", "explore"
+    arrive: float = 0.0  # 이만큼 가까워지면 도착 (출구는 0: 문에 들어갈 때까지)
+
+
+@dataclass
+class NavResult:
+    reason: str  # arrived, stopped, lost, no_progress, timeout, no_goal, no_path
+    secs: float
+
+
+GoalFn = Callable[[np.ndarray, tuple[float, float], tuple[float, float]], "Goal | None"]
+
+
+class Navigator:
+    def __init__(self, gi, grab: Callable[[], np.ndarray], log: Callable[[str, str], None],
+                 memory: RoomMemory | None = None):
+        self.gi = gi
+        self.grab = grab
+        self.log = log
+        self.memory = memory if memory is not None else RoomMemory()
+        self.odo = Odometry()
+        self.map = NavMap()
+        self.room: Room | None = None
+        self.floor = 0
+        self.kind = ""
+        self.next_kind = ""
+        self.pending: tuple[int, str, str, bool] | None = None  # 층/방 종류를 알았는데 아직 지도를 안 찾아봄
+        self.await_entry = False  # 다음 필드 화면이 새 방의 입구 화면
+        self.entry_img: np.ndarray | None = None
+        self.door_seen: tuple[float, float] | None = None  # 이번에 본 출구 문양 자리
+        self.door_candidate: tuple[float, float] | None = None  # 한 번 본 문양 자리 (한 번 더 보면 믿는다)
+        self.memory_exit: tuple[float, float] | None = None
+        self.marker_goal: tuple[float, float] | None = None
+        self.marker_goal_at = 0.0
+        self.last_pos: tuple[float, float] | None = None
+        self.explore_last: float | None = None
+        self.last_stop: tuple[float, tuple[float, float]] | None = None  # 걷다가 화면이 바뀌어 멈춘 때와 자리
+        self.finished = True
+
+    # -- 방 드나들기 ------------------------------------------------------------
+    # 로딩 화면을 보면(loading_seen) 그다음 첫 필드 화면이 새 방의 입구 화면이다. 위치는 그 화면을
+    # (0, 0) 기준으로 잰다. 방 제목을 읽어 층/방 종류를 알게 되면(new_room) 그 입구 화면으로 어떤
+    # 지도인지 알아본다. 제목은 입구 화면보다 늦게 읽힐 때가 많다.
+    def loading_seen(self) -> None:
+        self.left_by_exit()
+        self.await_entry = True
+
+    def new_room(self, floor: int, kind: str, next_kind: str, at_entrance: bool = True) -> None:
+        """층이 바뀜 (방 제목을 읽었거나 로딩 뒤 시간이 지남).
+        at_entrance=False: 봇을 방 중간에서 켰다. 그 화면은 입구가 아니라서 새 지도로 기억하지 않는다."""
+        self.pending = (floor, kind, next_kind, at_entrance)
+        if self.entry_img is None:  # 로딩 뒤 입구 화면을 아직 못 봤다 (처음 출발, 중간에 켬)
+            self.await_entry = True
+
+    def _begin(self, img: np.ndarray) -> None:
+        if not self.finished:
+            self.finish(exit_reached=False)
+        self.await_entry = False
+        self.entry_img = img
+        self.odo.reset()
+        self.odo.update(img)
+        self.map = NavMap()
+        self.room = None
+        self.door_seen = None
+        self.door_candidate = None
+        self.memory_exit = None
+        self.marker_goal = None
+        self.explore_last = None
+        self.finished = False
+
+    def _identify(self) -> None:
+        floor, kind, next_kind, at_entrance = self.pending
+        self.pending = None
+        entry, self.entry_img = self.entry_img, None
+        self.floor, self.kind, self.next_kind = floor, kind, next_kind
+        found = self.memory.identify(kind, entry)
+        if found:
+            room, (dx, dy), score = found
+            self.room = room
+            # 입구 화면은 기억해 둔 입구 화면에서 (dx, dy)만큼 밀려 있다: 좌표를 기억 쪽 기준으로 옮긴다
+            self.odo.shift_origin(-dx, -dy)
+            self.map = NavMap.from_json(room.nav) if room.nav else NavMap()
+            if room.exit:
+                self.memory_exit = (float(room.exit[0]), float(room.exit[1]))
+            self.log("지도", f"아는 지도 {room.id} (일치 {score:.2f}, {room.visits}번 와 봄, "
+                           f"출구 {'(%d, %d)' % tuple(room.exit) if room.exit else '모름'}, 전에 막힌 칸 {len(self.map.soft)}개)")
+        elif at_entrance:
+            self.room = self.memory.add(kind, floor, entry)
+            self.log("지도", f"처음 보는 지도 -> {self.room.id}로 기억")
+        else:
+            self.room = None
+            self.log("지도", "방 중간이라 어떤 지도인지 모름 (이번 방은 기억하지 않음)")
+
+    def left_by_exit(self) -> None:
+        """로딩 화면을 봄: 방금 걷다가 화면이 바뀌어 멈췄다면 그 자리가 출구 (문에 들어간 것)."""
+        if self.last_stop and time.monotonic() - self.last_stop[0] < 6 and not self.finished:
+            self.finish(exit_reached=True, pos=self.last_stop[1])
+
+    def finish(self, exit_reached: bool, pos: tuple[float, float] | None = None) -> None:
+        """방을 떠남. 출구로 나갔으면 그 자리를 출구로 적는다."""
+        if self.finished or self.room is None:
+            self.finished = True
+            return
+        self.finished = True
+        exit_pos = (pos or self.last_pos) if exit_reached else None
+        self.memory.record(self.room, self.floor, self.map, exit_pos)
+        if exit_pos:
+            self.log("지도", f"{self.room.id} 출구 자리 기억 ({exit_pos[0]:.0f}, {exit_pos[1]:.0f})")
+
+    # -- 보기 -------------------------------------------------------------------
+    def observe(self, img: np.ndarray, char: tuple[float, float] | None = None) -> tuple[float, float]:
+        """화면 하나 볼 때마다 부른다: 위치 갱신, 걸어 본 칸 표시. 캐릭터 월드 좌표를 돌려준다."""
+        if self.await_entry:
+            self._begin(img)
+        else:
+            self.odo.update(img)
+        if self.pending and self.entry_img is not None:
+            self._identify()
+        if char is None:
+            char = nv.find_character(img) or CHAR_FALLBACK
+        pos = self.odo.to_world(char)
+        self.map.visit(pos)
+        self.last_pos = pos
+        return pos
+
+    def exit_markers(self, img: np.ndarray, char: tuple[float, float]) -> list[nv.Marker]:
+        return [m for m in nv.find_markers(img, char) if m.kind == "exit"]
+
+    def exit_goal(self, img: np.ndarray, char: tuple[float, float], pos: tuple[float, float]) -> Goal | None:
+        """출구로 가려면 어디로? 화면에서 본 것 > 이번에 본 자리 > 전에 기억한 자리."""
+        if self.door_seen and math.hypot(self.door_seen[0] - pos[0], self.door_seen[1] - pos[1]) < 450:
+            return Goal(self.door_seen, "seen")  # 문 바로 앞: 가장자리 표시는 문 근처에서 흔들린다
+        markers = self.exit_markers(img, char)
+        if markers:
+            m = markers[0]
+            heading = nv.angle_of(m.icon[0] - SCREEN_CENTER[0], m.icon[1] - SCREEN_CENTER[1])
+            known = self.door_seen or self.memory_exit
+            if known and nv.angle_diff(heading, nv.angle_of(known[0] - pos[0], known[1] - pos[1])) < 50:
+                return Goal(known, "seen" if known == self.door_seen else "memory")
+            rad = math.radians(heading)
+            cam_center = self.odo.to_world(SCREEN_CENTER)
+            self.marker_goal = (cam_center[0] + math.cos(rad) * MARKER_GOAL_DIST,
+                                cam_center[1] - math.sin(rad) * MARKER_GOAL_DIST)
+            self.marker_goal_at = time.monotonic()
+            return Goal(self.marker_goal, "marker")
+        hue = nv.DOOR_HUE.get(self.next_kind, (None, 0))[0]
+        door = nv.find_exit_door(img, char, hue)
+        if door and nv.door_matches(door, self.next_kind):
+            w = self.odo.to_world(door.center)
+            # 같은 자리(월드 좌표)에서 두 번 보여야 문으로 믿는다 (한 번 우연히 잡힌 무늬에 끌려가지 않게)
+            c = self.door_candidate
+            if c and math.hypot(w[0] - c[0], w[1] - c[1]) < 200:
+                self.door_seen = w
+                return Goal(w, "door")
+            self.door_candidate = w
+        if self.door_seen:
+            return Goal(self.door_seen, "seen")
+        if self.memory_exit:
+            return Goal(self.memory_exit, "memory")
+        if self.marker_goal and time.monotonic() - self.marker_goal_at < MARKER_KEEP_SEC:
+            return Goal(self.marker_goal, "marker")
+        return None
+
+    def known_exit(self) -> tuple[float, float] | None:
+        return self.door_seen or self.memory_exit
+
+    # -- 걷기 -------------------------------------------------------------------
+    def walk(self, goal_fn: GoalFn, stop: Callable[[np.ndarray], bool], *, max_sec: float = 30.0,
+             avoid_exit: bool = False, why: str = "") -> NavResult:
+        """goal_fn이 주는 목표로 막힌 칸을 피해 걷는다. 화면을 볼 때마다 목표와 길을 다시 정한다."""
+        t0 = time.monotonic()
+        self.last_stop = None  # 걷는 중에 본 로딩은 걷기가 끝난 뒤에 출구로 적는다 (예전 멈춘 자리를 쓰지 않게)
+        self.map.avoid = []
+        if avoid_exit and self.known_exit():
+            self.map.avoid = [(self.known_exit(), EXIT_AVOID_R)]
+        best_d, best_t = math.inf, t0
+        hist: deque = deque()  # (시각, 월드 좌표)
+        held: tuple[str, ...] = ()
+        held_since = t0
+        lost = 0
+        blocks = 0
+        last_goal_kind = ""
+        last_goal_log = 0.0
+        try:
+            while True:
+                now = time.monotonic()
+                img = self.grab()
+                if stop(img):
+                    if self.last_pos:
+                        self.last_stop = (now, self.last_pos)
+                    return NavResult("stopped", now - t0)
+                char = nv.find_character(img)
+                if char is None:
+                    lost += 1
+                    if lost >= 6:
+                        return NavResult("lost", now - t0)
+                else:
+                    lost = 0
+                pos = self.observe(img, char)
+                goal = goal_fn(img, char or CHAR_FALLBACK, pos)
+                if goal is None:
+                    return NavResult("no_goal", now - t0)
+                if goal.kind != last_goal_kind and now - last_goal_log > 1.5:
+                    self.log("이동", f"{why} 목표 {goal.kind} ({goal.pos[0]:.0f}, {goal.pos[1]:.0f}), 지금 ({pos[0]:.0f}, {pos[1]:.0f})")
+                    last_goal_kind, last_goal_log = goal.kind, now
+                d = math.hypot(goal.pos[0] - pos[0], goal.pos[1] - pos[1])
+                if goal.arrive and d < goal.arrive:
+                    return NavResult("arrived", now - t0)
+                if d < best_d - 40:
+                    best_d, best_t = d, now
+                elif now - best_t > NO_PROGRESS_SEC:
+                    return NavResult("no_progress", now - t0)
+                if now - t0 > max_sec:
+                    return NavResult("timeout", now - t0)
+
+                # 막힘: 같은 쪽으로 BLOCK_WINDOW 넘게 눌렀는데 그쪽으로 거의 안 갔다
+                hist.append((now, pos))
+                while len(hist) > 2 and now - hist[1][0] >= BLOCK_WINDOW:
+                    hist.popleft()
+                if held and now - held_since > BLOCK_WINDOW + 0.3 and now - hist[0][0] >= BLOCK_WINDOW * 0.8:
+                    ang = nv.angle_of_keys(held)
+                    ux, uy = math.cos(math.radians(ang)), -math.sin(math.radians(ang))
+                    moved = (pos[0] - hist[0][1][0]) * ux + (pos[1] - hist[0][1][1]) * uy
+                    if moved < BLOCK_MIN_MOVE:
+                        # 앞 칸과 그 양옆 칸 (벽은 대개 옆으로 이어진다)
+                        fx, fy = pos[0] + ux * CELL, pos[1] + uy * CELL
+                        c = self.map.block((fx, fy))
+                        for side in (-1, 1):
+                            self.map.block((fx - uy * CELL * side, fy + ux * CELL * side))
+                        blocks += 1
+                        self.log("이동", f"{'+'.join(held)} 쪽이 막힘 ({moved:.0f}px), 칸 {c} 막힌 칸으로 적음")
+                        held = ()
+                        self.gi.set_held(())
+                        held_since = now
+                        hist.clear()
+                        continue
+
+                path = self.map.plan(pos, goal.pos)
+                if not path:
+                    return NavResult("no_path", now - t0)
+                wp = self._lookahead(pos, path)
+                want = nv.angle_of(wp[0] - pos[0], wp[1] - pos[1])
+                cur = nv.angle_of_keys(held) if held else None
+                if cur is None or nv.angle_diff(want, cur) > KEEP_KEYS_DEG:
+                    keys = nv.keys_for_angle(want)
+                    if keys != held:
+                        if cur is None or nv.angle_diff(nv.angle_of_keys(keys), cur) > 60:
+                            held_since = now  # 크게 꺾으면 제자리에서 도는 시간이 있다
+                            hist.clear()
+                        held = keys
+                        self.gi.set_held(held)
+                time.sleep(TICK)
+        finally:
+            self.gi.set_held(())
+
+    def _lookahead(self, pos: tuple[float, float], path: list[tuple[float, float]]) -> tuple[float, float]:
+        """경로에서 막힌 칸 없이 곧장 갈 수 있는 가장 먼 점 (최대 400px 앞)."""
+        best = path[0]
+        for p in path:
+            if math.hypot(p[0] - pos[0], p[1] - pos[1]) > 400:
+                break
+            if self._clear_line(pos, p):
+                best = p
+            else:
+                break
+        return best
+
+    def _clear_line(self, a: tuple[float, float], b: tuple[float, float]) -> bool:
+        n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) / (CELL / 3)))
+        for k in range(1, n + 1):
+            c = to_cell((a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n))
+            if not self.map.passable(c):
+                return False
+        return True
+
+    # -- 둘러보기 ---------------------------------------------------------------
+    def explore(self, stop: Callable[[np.ndarray], bool], *, max_sec: float = 3.0, avoid_exit: bool = False,
+                why: str = "둘러보기") -> NavResult:
+        """아직 안 가 본 쪽 중 막히지 않은 방향으로 조금 걷는다. 출구를 피해야 하면 출구 쪽은 안 간다."""
+        img = self.grab()
+        char = nv.find_character(img)
+        pos = self.observe(img, char)
+        avoid_angles = []
+        if avoid_exit:
+            for m in self.exit_markers(img, char or CHAR_FALLBACK):
+                avoid_angles.append(nv.angle_of(m.icon[0] - SCREEN_CENTER[0], m.icon[1] - SCREEN_CENTER[1]))
+            if self.known_exit():
+                ex = self.known_exit()
+                avoid_angles.append(nv.angle_of(ex[0] - pos[0], ex[1] - pos[1]))
+        best = None
+        for ang, _ in nv.DIRECTIONS:
+            if any(nv.angle_diff(ang, a) < 60 for a in avoid_angles):
+                continue
+            score = self.map.frontier_score(pos, ang)
+            if self.explore_last is not None:
+                diff = nv.angle_diff(ang, self.explore_last)
+                score += 3 if diff < 1 else (-4 if diff > 150 else 0)  # 가던 쪽 조금 선호, 되돌아가기는 덜
+            if best is None or score > best[0]:
+                best = (score, ang)
+        if best is None or best[0] <= 0:
+            self.log("이동", f"{why}: 더 가 볼 곳이 없음")
+            self.explore_last = None
+            return NavResult("no_goal", 0.0)
+        ang = best[1]
+        self.explore_last = ang
+        rad = math.radians(ang)
+        target = (pos[0] + math.cos(rad) * 700, pos[1] - math.sin(rad) * 700)
+        self.log("이동", f"{why}: {ang:+.0f}도 쪽 (모르는 칸 점수 {best[0]:.0f})")
+        return self.walk(lambda im, ch, p: Goal(target, "explore", arrive=120), stop, max_sec=max_sec,
+                         avoid_exit=avoid_exit, why=why)

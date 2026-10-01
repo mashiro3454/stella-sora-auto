@@ -154,6 +154,20 @@ class GameInput:
             _send(*(_key_input(s, up=True) for s in scans))
             self._held.difference_update(names)
 
+    def set_held(self, names: tuple[str, ...]) -> None:
+        """지금 누르고 있는 이동 키를 names로 바꾼다 (같은 키는 떼지 않고 계속 누른다).
+        걸으면서 화면을 보고 방향을 고칠 때 쓴다. 다 떼려면 빈 튜플."""
+        if names:
+            self._check_focus()
+        up =[n for n in self._held if n not in names]
+        down = [n for n in names if n not in self._held]
+        if up:
+            _send(*(_key_input(SCANCODES[n], up=True) for n in up))
+            self._held.difference_update(up)
+        if down:
+            _send(*(_key_input(SCANCODES[n], up=False) for n in down))
+            self._held.update(down)
+
     def release_all(self) -> None:
         if self._held:
             _send(*(_key_input(SCANCODES[n], up=True) for n in self._held))

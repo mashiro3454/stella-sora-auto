@@ -19,10 +19,13 @@ import numpy as np
 # 체력바 아래쪽에서 발까지 대략 이만큼 위
 HP_BAR_TO_FEET = 60
 
-# (화면 각도, 키) 화면 기준: 오른쪽 0도, 위쪽 90도
+# (화면 각도, 키) 화면 기준: 오른쪽 0도, 위쪽 90도.
+# 카메라가 비스듬히 내려다봐서 위아래 움직임이 좌우의 약 0.73배로 보인다. 그래서 W+D는 화면에서
+# 45도가 아니라 약 36도로 간다 (13층 실험: W+D 0.1초에 (+30, -22)px).
+DIAG = 36.0
 DIRECTIONS: tuple[tuple[float, tuple[str, ...]], ...] = (
-    (0, ("d",)), (45, ("w", "d")), (90, ("w",)), (135, ("w", "a")),
-    (180, ("a",)), (-135, ("s", "a")), (-90, ("s",)), (-45, ("s", "d")),
+    (0, ("d",)), (DIAG, ("w", "d")), (90, ("w",)), (180 - DIAG, ("w", "a")),
+    (180, ("a",)), (DIAG - 180, ("s", "a")), (-90, ("s",)), (-DIAG, ("s", "d")),
 )
 
 
@@ -31,11 +34,16 @@ def angle_of(dx: float, dy: float) -> float:
     return math.degrees(math.atan2(-dy, dx))
 
 
-def keys_for_angle(angle: float) -> tuple[str, ...]:
-    def diff(a: float) -> float:
-        return abs((angle - a + 180) % 360 - 180)
+def angle_diff(a: float, b: float) -> float:
+    return abs((a - b + 180) % 360 - 180)
 
-    return min(DIRECTIONS, key=lambda d: diff(d[0]))[1]
+
+def keys_for_angle(angle: float) -> tuple[str, ...]:
+    return min(DIRECTIONS, key=lambda d: angle_diff(angle, d[0]))[1]
+
+
+def angle_of_keys(keys: tuple[str, ...]) -> float | None:
+    return next((a for a, k in DIRECTIONS if k == tuple(keys)), None)
 
 
 def find_character(img: np.ndarray) -> tuple[float, float] | None:
@@ -102,8 +110,10 @@ def find_markers(img: np.ndarray, char: tuple[float, float] | None) -> list[Mark
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     mask = ((hsv[..., 0] > 80) & (hsv[..., 0] < 100) & (hsv[..., 1] > 150) & (hsv[..., 2] > 150)).astype(np.uint8)
     mask[:110, :420] = 0  # 왼쪽 위 HUD
+    mask[:200, :330] = 0  # 기록 점수 메달 (파란 동그라미를 출구 표시로 잡은 일이 있었다)
     mask[960:, :] = 0  # 아래 HUD
-    mask[:200, 1500:] = 0  # 오른쪽 위 HUD
+    mask[:85, 1420:] = 0  # 오른쪽 위 레벨/돈
+    mask[:230, 1780:] = 0  # 자동 전투 버튼
     n, _, st, cen = cv2.connectedComponentsWithStats(mask)
     blobs = [(int(st[i][4]), cen[i], st[i]) for i in range(1, n) if st[i][4] > 60]
     if char:  # 캐릭터 발밑의 방향 화살표도 청록색이라 뺀다
@@ -159,7 +169,8 @@ class ExitDoor:
     hue: float  # 문양 고리 색 (OpenCV 색상값 0~180). 다음 방 종류마다 다르다
 
 
-def find_exit_door(img: np.ndarray, char: tuple[float, float] | None = None) -> ExitDoor | None:
+def find_exit_door(img: np.ndarray, char: tuple[float, float] | None = None,
+                   hue: float | None = None) -> ExitDoor | None:
     """출구 문 안의 문양: 밝은 타원 테두리 + 안쪽이 방 종류 색.
 
     문양은 반투명이라 안쪽 채도가 낮을 수 있고(선택의 방 파란 문양), 화면 가장자리에서 잘릴 수 있다.
@@ -172,7 +183,8 @@ def find_exit_door(img: np.ndarray, char: tuple[float, float] | None = None) -> 
     hud = np.zeros_like(white)
     hud[:110, :420] = 1
     hud[960:, :] = 1
-    hud[:200, 1500:] = 1
+    hud[:85, 1420:] = 1  # 레벨/돈 (15층에서 계단 위 출구 문이 (1585, 95)에 있었다)
+    hud[:230, 1780:] = 1  # 자동 전투 버튼
     white[hud > 0] = 0
     contours, _ = cv2.findContours(white, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
     best: tuple[float, ExitDoor] | None = None
@@ -189,7 +201,7 @@ def find_exit_door(img: np.ndarray, char: tuple[float, float] | None = None) -> 
         big, small = max(a, b), min(a, b)
         if not (75 <= big <= 320 and small / big > 0.5):  # 75 미만은 방 제목 글자(ㅇ) 같은 것
             continue
-        if cy > 930 or (cx < 420 and cy < 110) or (cx > 1500 and cy < 200) or (cx > 1450 and cy > 760):
+        if cy > 930 or (cx < 420 and cy < 110) or (cx > 1420 and cy < 85) or (cx > 1780 and cy < 230) or (cx > 1450 and cy > 760):
             continue  # HUD 자리 (아래/오른쪽 아래 스킬 버튼, 왼쪽 위 아이콘, 오른쪽 위 돈)
         if math.hypot(cx - 1261, cy - 676) < 90:
             continue  # "F 대화"/"F 강화" 표시의 흰 동그라미 (늘 이 자리에 뜬다)
@@ -212,7 +224,68 @@ def find_exit_door(img: np.ndarray, char: tuple[float, float] | None = None) -> 
         door = ExitDoor((cx, cy), (a, b), float(np.median(colorful[:, 0])))
         if best is None or fit * big > best[0]:
             best = (fit * big, door)
+    if best:
+        return best[1]
+    return _find_color_ring(img, char, hue) if hue is not None else None
+
+
+def _hud_or_prompt(cx: float, cy: float, char: tuple[float, float] | None) -> bool:
+    if cy > 930 or (cx < 420 and cy < 110) or (cx > 1420 and cy < 85) or (cx > 1780 and cy < 230)             or (cx > 1450 and cy > 760):
+        return True
+    if math.hypot(cx - 1261, cy - 676) < 90:
+        return True
+    return bool(char and math.hypot(cx - char[0], cy - char[1] - HP_BAR_TO_FEET / 2) < 150)
+
+
+def _find_color_ring(img: np.ndarray, char: tuple[float, float] | None, hue: float, tol: int = 10) -> ExitDoor | None:
+    """문양 고리가 흰색이 아니라 방 종류 색일 때 (15층 선택의 방 문: 하늘색 고리, 레벨 표시에 반쯤 가림).
+    다음 방 색(hue)의 밝은 픽셀로 고리 모양 타원을 찾는다. 둘레를 고르게 덮어야(cover) 고리로 본다."""
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    dh = np.abs(((hsv[..., 0].astype(np.int16) - int(hue) + 90) % 180) - 90)
+    m = ((dh <= tol) & (hsv[..., 1] > 60) & (hsv[..., 2] > 170)).astype(np.uint8) * 255
+    m[:110, :420] = 0
+    m[960:, :] = 0
+    m[:85, 1420:] = 0
+    m[:230, 1780:] = 0
+    m[760:, 1450:] = 0
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    best: tuple[float, ExitDoor] | None = None
+    h_img, w_img = img.shape[:2]
+    for c in contours:
+        if len(c) < 80:
+            continue
+        pts = c.reshape(-1, 2)
+        keep = (pts[:, 0] > 2) & (pts[:, 1] > 2) & (pts[:, 0] < w_img - 3) & (pts[:, 1] < h_img - 3)
+        keep &= ~((pts[:, 1] < 88) & (pts[:, 0] > 1417))  # 레벨/돈 표시에 잘린 가장자리
+        pts = pts[keep]
+        if len(pts) < 60:
+            continue
+        (cx, cy), (a, b), ang = cv2.fitEllipse(pts.reshape(-1, 1, 2).astype(np.int32))
+        big, small = max(a, b), min(a, b)
+        if not (75 <= big <= 320 and small / big > 0.55) or _hud_or_prompt(cx, cy, char):
+            continue
+        poly = cv2.ellipse2Poly((int(cx), int(cy)), (int(a / 2), int(b / 2)), int(ang), 0, 360, 5).reshape(-1, 1, 2)
+        fit = float(np.mean([abs(cv2.pointPolygonTest(poly, (float(p[0]), float(p[1])), True)) < 5 for p in pts[::3]]))
+        cover = len(set((np.degrees(np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx)) // 30).astype(int).tolist())) / 12
+        if fit < 0.85 or cover < 0.6:
+            continue
+        if best is None or fit * big > best[0]:
+            best = (fit * big, ExitDoor((cx, cy), (a, b), float(hue)))
     return best[1] if best else None
+
+
+# 출구 문양 안쪽 색 (OpenCV 색상값 0~180, 가운데와 허용 폭). 다음 방 종류마다 다르다.
+# 전투/선택/리더는 실행 로그 스샷에서 잰 값 (21, 89~90, 7). 강적/거래는 아직 못 재서 넓게 둔다.
+DOOR_HUE = {"전투": (21, 10), "선택": (90, 12), "리더": (6, 10), "강적": (12, 14), "거래": (70, 30)}
+
+
+def door_matches(door: ExitDoor, next_room: str) -> bool:
+    """문양 색이 다음 방 종류와 맞는지. 다음 방을 모르면 True."""
+    if next_room not in DOOR_HUE:
+        return True
+    mid, tol = DOOR_HUE[next_room]
+    return abs((door.hue - mid + 90) % 180 - 90) <= tol
 
 
 def exit_target(img: np.ndarray, char: tuple[float, float]) -> tuple[float, float] | None:

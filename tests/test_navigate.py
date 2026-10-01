@@ -86,3 +86,20 @@ def test_prompt_circle_is_not_exit_door():
         img = load(name)
         d = nv.find_exit_door(img, nv.find_character(img))
         assert d is None or (d.center[0] - 1261) ** 2 + (d.center[1] - 676) ** 2 > 90 ** 2
+
+
+def test_door_with_colored_ring():
+    # 15층: 다음 방(선택) 문양 고리가 흰색이 아니라 하늘색이고, 레벨 표시에 반쯤 가렸다
+    img = load("field__live_door15.jpg")
+    ch = nv.find_character(img)
+    d = nv.find_exit_door(img, ch, nv.DOOR_HUE["선택"][0])
+    assert d is not None and abs(d.center[0] - 1588) < 20 and abs(d.center[1] - 100) < 25
+    assert nv.door_matches(d, "선택")
+    assert nv.find_markers(img, ch) == []  # 문이 화면에 있으면 가장자리 표시는 없다
+
+
+def test_score_badge_is_not_marker():
+    # 왼쪽 위 기록 점수 메달(파란 동그라미)을 출구 표시로 잡던 문제 (13층)
+    img = load("odo/walk13_036.jpg")
+    img = cv2.resize(img, (1920, 1080))
+    assert all(not (m.icon[0] < 330 and m.icon[1] < 200) for m in nv.find_markers(img, nv.find_character(img)))
