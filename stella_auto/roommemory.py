@@ -35,6 +35,7 @@ class Room:
     visits: int = 0
     exit: list[float] | None = None  # 출구 월드 좌표 (나간 자리들의 평균)
     exit_count: int = 0
+    exit_conflicts: int = 0  # 기억한 출구와 크게 다른 자리로 나간 횟수 (연속)
     npcs: list[list] = field(default_factory=list)  # [x, y, 종류] 말을 건 자리 (종류: npc, shop, enhance)
     nav: dict = field(default_factory=dict)  # NavMap.to_json()
     updated: str = ""
@@ -99,13 +100,18 @@ class RoomMemory:
         if floor not in r.floors:
             r.floors.append(floor)
         if exit_pos is not None:
-            if r.exit is None or math.hypot(exit_pos[0] - r.exit[0], exit_pos[1] - r.exit[1]) > 300:
-                # 처음이거나 전과 많이 다르면(지도를 잘못 알아봤을 수 있다) 새 자리를 믿는다
-                r.exit, r.exit_count = [round(exit_pos[0]), round(exit_pos[1])], 1
+            far = r.exit is not None and math.hypot(exit_pos[0] - r.exit[0], exit_pos[1] - r.exit[1]) > 300
+            if far and r.exit_count >= 2 and r.exit_conflicts < 1:
+                # 여러 번 확인한 출구와 많이 다르다: 이번 판 위치 재기가 틀어졌을 수 있어서 한 번은 무시한다
+                # (5층에서 오래 헤맨 뒤 출구 자리를 500px 틀리게 덮어썼다)
+                r.exit_conflicts += 1
+            elif r.exit is None or far:
+                r.exit, r.exit_count, r.exit_conflicts = [round(exit_pos[0]), round(exit_pos[1])], 1, 0
             else:
                 n = r.exit_count
                 r.exit = [round((r.exit[0] * n + exit_pos[0]) / (n + 1)), round((r.exit[1] * n + exit_pos[1]) / (n + 1))]
                 r.exit_count = n + 1
+                r.exit_conflicts = 0
         r.nav = nav.to_json()  # 이번 지도는 기억에서 꺼낸 지도에 이어 그린 것이라 그대로 저장
         r.updated = time.strftime("%Y-%m-%d %H:%M:%S")
         self.save()
