@@ -91,8 +91,12 @@ def _marker_templates() -> dict[str, np.ndarray]:
     return _MARKER_TEMPLATES
 
 
-def _classify_marker(gray: np.ndarray, box: tuple[int, int, int, int]) -> str:
-    """청록 아이콘이 출구(문)인지 NPC(물음표 상자)인지. 템플릿이 애매하면 가로세로 비율로 (문이 더 길쭉)."""
+MARKER_MIN_SCORE = 0.55  # 진짜 표시는 0.9 안팎, 14층 청록 선물 상자는 0.3~0.4였다
+
+
+def _classify_marker(gray: np.ndarray, box: tuple[int, int, int, int]) -> str | None:
+    """청록 아이콘이 출구(문)인지 NPC(물음표 상자)인지. 어느 템플릿과도 안 닮았으면 None (표시가 아님).
+    둘 다 비슷하게 닮았으면 가로세로 비율로 (문이 더 길쭉)."""
     x, y, w, h = box
     cx, cy = x + w // 2, y + h // 2
     region = gray[max(0, cy - 40):cy + 40, max(0, cx - 40):cx + 40]
@@ -100,7 +104,9 @@ def _classify_marker(gray: np.ndarray, box: tuple[int, int, int, int]) -> str:
     for kind, t in _marker_templates().items():
         if region.shape[0] >= t.shape[0] and region.shape[1] >= t.shape[1]:
             scores[kind] = float(cv2.matchTemplate(region, t, cv2.TM_CCOEFF_NORMED).max())
-    if scores and max(scores.values()) >= 0.45 and abs(scores.get("exit", 0) - scores.get("npc", 0)) > 0.08:
+    if not scores or max(scores.values()) < MARKER_MIN_SCORE:
+        return None  # 청록색 물건 (14층: 선물 상자를 출구 표시로 잡아 오른쪽/왼쪽을 7분 동안 오갔다)
+    if abs(scores.get("exit", 0) - scores.get("npc", 0)) > 0.08:
         return max(scores, key=scores.get)
     return "exit" if w / max(h, 1) < 0.9 else "npc"
 
@@ -140,6 +146,8 @@ def find_markers(img: np.ndarray, char: tuple[float, float] | None) -> list[Mark
             d = tri[1] - icon[1]
             direction = (float(d[0]), float(d[1]))
         kind = _classify_marker(gray, tuple(int(v) for v in icon[2][:4]))
+        if kind is None:
+            continue
         out.append(Marker(kind, (float(icon[1][0]), float(icon[1][1])), direction))
     return out
 

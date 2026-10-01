@@ -103,3 +103,11 @@ def test_score_badge_is_not_marker():
     img = load("odo/walk13_036.jpg")
     img = cv2.resize(img, (1920, 1080))
     assert all(not (m.icon[0] < 330 and m.icon[1] < 200) for m in nv.find_markers(img, nv.find_character(img)))
+
+
+def test_cyan_gift_boxes_are_not_markers():
+    # 14층: 청록 선물 상자를 출구 표시로 잡아 진짜 표시(왼쪽)와 번갈아 따라가다 7분을 넘겼다
+    img = load("field__live_giftboxes14.jpg")
+    # (이 사진은 1280 저장본을 키운 것이라 진짜 표시는 조각나서 안 잡힌다. 상자만 안 잡히면 된다)
+    ms = nv.find_markers(img, nv.find_character(img))
+    assert all(m.icon[0] < 1100 for m in ms)
