@@ -68,3 +68,36 @@ def test_note_count_reads_ocr_variants():
     assert mk("필살기의 소리 15").note_count == 15
     plan = plan_purchases([mk("기술의 소리%15")], 3000, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None)
     assert plan.buy == []
+
+
+def test_read_shop_half_price_notes(ocr):
+    # 12층: "폭발의 소리x5" 45원(반값)을 넓게 읽으면 옛 가격과 섞여 72원으로 알았다
+    img = cv2.imdecode(np.fromfile(str(SCREENS / "shop__live_12.jpg"), np.uint8), cv2.IMREAD_COLOR)
+    items = {i.slot: i for i in read_shop(img, ocr)}
+    assert items[4].price == 45 and items[4].old_price == 90
+    assert items[3].price == 72 and items[0].price == 160 and items[1].price == 100
+
+
+def test_plan_notes_by_ensemble_needs():
+    def note(slot, price, old, count, users, have=10):
+        return ShopItem(slot, f"소리x{count}", price, old, False, (0, 0), note_type=0, users=users, have=have)
+    items = [note(0, 45, 90, 5, 0), note(1, 72, 90, 5, 1), note(2, 72, 90, 5, 1, have=45), note(3, 200, 400, 15, 2),
+             note(4, 200, 400, 15, 1), note(5, 90, None, 5, 4), note(6, 90, None, 5, 3), note(7, 320, 400, 15, 6)]
+    plan = plan_purchases(items, 3000, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None)
+    assert sorted(i.slot for i in plan.buy) == [0, 1, 3, 5]
+    # 필요량을 못 읽었으면 45원짜리만
+    for i in items:
+        i.users = None
+    plan = plan_purchases(items, 3000, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None)
+    assert [i.slot for i in plan.buy] == [0]
+
+
+def test_read_ensemble_needs(ocr):
+    from stella_auto import notes
+    img = cv2.imdecode(np.fromfile(str(SCREENS / "bag__live_skills.jpg"), np.uint8), cv2.IMREAD_COLOR)
+    n = notes.read_needs(img, ocr)
+    assert n.users == {0: 3, 1: 2, 4: 1, 6: 3, 8: 6}
+    assert n.have[8] == 16 and n.have[6] == 35 and n.have[0] == 24
+    shop = cv2.imdecode(np.fromfile(str(SCREENS / "shop__live_12.jpg"), np.uint8), cv2.IMREAD_COLOR)
+    types = [notes.shop_note_type(shop, i.click[0], i.click[1], i.name) for i in read_shop(shop, ocr) if i.kind == "notes"]
+    assert types == [0, 2, 4, 2, 0]

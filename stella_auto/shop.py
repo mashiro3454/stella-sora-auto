@@ -29,6 +29,9 @@ class ShopItem:
     old_price: int | None  # 할인 전 가격 (할인 아니면 None)
     sold_out: bool
     click: tuple[int, int]  # 상품 그림
+    note_type: int | None = None  # 소리 종류 (notes.NOTE_NAMES 순서)
+    users: int | None = None  # 이 소리가 필요한 협주스킬 수 (가방에서 읽음, 모르면 None)
+    have: int | None = None  # 이 소리를 가진 개수
 
     @property
     def discounted(self) -> bool:
@@ -68,12 +71,17 @@ def _price_key(kind: str, name: str) -> str | None:
     return None
 
 
-def _guess_price(key: str, tag: str, digits: str) -> tuple[int, int | None]:
+def _guess_price(key: str, tag: str, digits: str, big: str = "") -> tuple[int, int | None]:
     """(가격, 옛 가격). 큰 가격 숫자는 OCR이 "160"을 "9160", "100"을 "!00"처럼 깨뜨려서,
     딱지("할인")로 할인 여부를 정하고 숫자 조각으로 20%/50%를 고른다."""
     full, d20, d50 = PRICES[key]
     if "할" not in tag and "인" not in tag:
         return full, None
+    # 오른쪽의 큰 새 가격만 따로 읽은 숫자(big)가 할인 가격 하나와 딱 맞으면 그것
+    # (12층: "폭발의 소리x5" 45원을 72원으로 알고 안 샀다. 넓게 읽으면 옛 가격과 섞여 빈칸이 됐다)
+    for cand in (d50, d20):
+        if big == str(cand):
+            return cand, full
     s20, s50 = str(d20), str(d50)
     if s20 in digits or s20[:2] in digits:
         return d20, full
@@ -111,6 +119,7 @@ def read_shop(img: np.ndarray, ocr: KoreanOcr) -> list[ShopItem]:
             tk = tag_kind(img, cx, price_y)
             tag = {"sale": "할인", "sold": "품절"}.get(tk, "")
             digits = re.sub(r"\D", "", ocr.text(img, (cx - 50, price_y - 30, cx + 92, price_y + 20)))
+            big = re.sub(r"\D", "", ocr.text(img, (cx - 5, price_y - 32, cx + 92, price_y + 22)))
             sold = tk == "sold"
             kind = ShopItem(0, name, 0, None, False, (0, 0)).kind
             key = _price_key(kind, name)
@@ -118,7 +127,7 @@ def read_shop(img: np.ndarray, ocr: KoreanOcr) -> list[ShopItem]:
                 nums = re.findall(r"\d+", digits)
                 price, old = (int(nums[-1]) if nums else 9999), None
             else:
-                price, old = _guess_price(key, tag, digits)
+                price, old = _guess_price(key, tag, digits + big, big)
             items.append(ShopItem(r * 4 + c, name, price, old, sold, (cx, icon_y)))
     return items
 
@@ -142,7 +151,9 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
     """살 것 고르기.
 
     - 할인하는 잠재력 음료는 전부 산다.
-    - 소리는 아직 협주스킬 필요량을 몰라서, 50% 할인(5개 45원)만 산다 [다음 단계에서 필요량 반영].
+    - 소리 (사용자 규칙): 5개 45원은 무조건, 5개 72원은 가진 게 41개 미만이고 쓰는 협주스킬이 있으면,
+      15개 200원은 협주스킬 2개 이상이 쓰면, 5개 90원은 4개 이상이 쓰면. 15개 320/400원은 안 산다.
+      협주스킬 필요량(users)을 못 읽었으면 45원짜리만 산다.
     - 할인 상품을 다 사고도 1000원 이상 남으면 200원짜리 잠재력 음료도 산다.
     - 마지막 상점(20층)에선 돈이 안 남게 200원짜리까지 산다.
     - 카드 리롤용으로 reserve(기본 80원)는 남긴다 (마지막 상점 제외).
@@ -163,9 +174,16 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
 
     for it in sorted([i for i in avail if i.kind == "potential" and i.discounted], key=lambda i: i.price):
         take(it)
-    for it in [i for i in avail if i.kind == "notes" and i.discounted and i.old_price
-               and i.price * 2 <= i.old_price + 1 and i.note_count == 5 and i.price == PRICES["notes5"][2]]:
-        take(it)
+    notes = [i for i in avail if i.kind == "notes"]
+    for it in [i for i in notes if i.note_count == 5 and i.price == PRICES["notes5"][2]]:
+        take(it)  # 5개 45원
+    for it in [i for i in notes if i.note_count == 5 and i.price == PRICES["notes5"][1]
+               and i.users and (i.have is None or i.have < 41)]:
+        take(it)  # 5개 72원
+    for it in [i for i in notes if i.note_count == 15 and i.price == PRICES["notes15"][2] and (i.users or 0) >= 2]:
+        take(it)  # 15개 200원
+    for it in [i for i in notes if i.note_count == 5 and i.price == PRICES["notes5"][0] and (i.users or 0) >= 4]:
+        take(it)  # 5개 90원
     full_potions = sorted([i for i in avail if i.kind == "potential" and not i.discounted], key=lambda i: i.price)
     for it in full_potions:
         if last_shop or money - it.price >= 1000:

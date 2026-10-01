@@ -27,6 +27,7 @@ from .capture import capture, find_game_window, restore
 from .cards import read_cards, team_pool
 from .choices import find_option_boxes, read_choices
 from .shop import plan_purchases, read_reroll, read_shop
+from .notes import NOTE_NAMES, read_needs, shop_note_type
 from .gamedata import default_gamedata
 from . import killswitch
 from .input import GameInput, NotFocusedError, release_all_keys
@@ -112,6 +113,7 @@ class Bot:
         self.shop_queue: list = []
         self.shop_rerolled = False
         self.shop_peeked = False
+        self.note_needs = None  # 가방에서 읽은 협주스킬별 필요한 소리
         self.trade_tick = 0
         self.gamble_won = False
         self.require_gamble = True
@@ -456,7 +458,10 @@ class Bot:
             # 레코드 스킬 탭 (왼쪽 두 번째)
             self.gi.click(220, 321)
             time.sleep(0.8)
-            self.save_full(self.grab(), "bag_skills")
+            skills = self.grab()
+            self.save_full(skills, "bag_skills")
+            self.note_needs = read_needs(skills, self.ocr)
+            self.log("상점", f"가방: {self.note_needs.summary() or '협주스킬 필요량을 못 읽음'}")
             self.gi.key("esc")
             time.sleep(1.0)
         if self.det.detect(self.grab()).state == "bag":
@@ -473,6 +478,12 @@ class Bot:
         if self.shop_plan is None:
             gold = self.read_gold(img) or 0
             items = read_shop(img, self.ocr)
+            for it in items:
+                if it.kind == "notes":
+                    it.note_type = shop_note_type(img, it.click[0], it.click[1], it.name)
+                    if self.note_needs is not None and it.note_type is not None:
+                        it.users = self.note_needs.users.get(it.note_type, 0)
+                        it.have = self.note_needs.have.get(it.note_type)
             price, left = read_reroll(img, self.ocr)
             if self.shop_rerolled:
                 left = 0
@@ -480,7 +491,9 @@ class Bot:
                                             reroll_left=left, reroll_price=price)
             self.shop_queue = list(self.shop_plan.buy)
             desc = ", ".join(f"{i.slot}:{i.name}({i.price}{'/' + str(i.old_price) if i.discounted else ''}"
-                             f"{' 품절' if i.sold_out else ''})" for i in items)
+                             f"{' 품절' if i.sold_out else ''}"
+                             f"{' ' + NOTE_NAMES[i.note_type] + ' 협주' + str(i.users) if i.note_type is not None and i.users is not None else ''})"
+                             for i in items)
             self.log("상점", f"{self.shop_index}번째 상점, {self.shop_plan.reason} | {desc}", img)
         if self.shop_queue:
             item = self.shop_queue.pop(0)
