@@ -96,6 +96,7 @@ class Bot:
         self._card_tries = 0
         self._last_cards: tuple | None = None  # 직전에 읽은 카드 (두 번 연속 같아야 고른다)
         self._last_choice_bands: tuple | None = None
+        self._declined: str | None = None  # ESC로 안 고르고 나간 선택지 질문
         self.loading_at: float | None = None  # 층 사이 로딩을 본 때 (방 제목을 놓치면 이걸로 층을 센다)
         self.floor_changed_at = 0.0
         self.last_talk_at = 0.0
@@ -119,6 +120,7 @@ class Bot:
         self.deadline: float | None = None  # 이 시각이 지나면 새 판을 시작하지 않는다
         self.run_tracked = False  # 이 판을 봇이 1층부터 봤는지 (잠재 레벨 기억이 온전한지)
         self.restart_pending = ""
+        self._gamble_at = 0.0
         log_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
         self.log_path = log_dir / f"run_{stamp}.jsonl"
@@ -155,6 +157,40 @@ class Bot:
         print(f"[{rec['t']}] {self.run.floor}층 {kind}: {msg}", flush=True)
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+
+    def read_gold_steady(self, tries: int = 3) -> int | None:
+        """돈을 몇 번 읽어 가장 큰 값 (OCR이 "330"을 "30"처럼 한 자리 빼먹는 일이 있어서)."""
+        vals = []
+        for _ in range(tries):
+            g = self.read_gold(self.grab())
+            if g is not None:
+                vals.append(g)
+            time.sleep(0.15)
+        return max(vals) if vals else None
+
+    def judge_gamble(self) -> tuple[bool | None, str]:
+        """650원 도박 결과. 화면 가운데 알림("200개를 잃었습니다", "650개를 획득했습니다")을 먼저 보고,
+        없으면 돈이 얼마나 바뀌었는지로. (이김/짐/None=아직 모름, 이유)"""
+        before = self._gamble_gold_before
+        golds = []
+        for _ in range(3):
+            im = self.grab()
+            banner = self.ocr.text(im, (480, 170, 1440, 280)).replace(" ", "")
+            if "잃었" in banner or "잃" in banner and "개" in banner:
+                return False, f"알림 '{banner}'"
+            if "획득" in banner and "65" in banner:
+                return True, f"알림 '{banner}'"
+            g = self.read_gold(im)
+            if g is not None:
+                golds.append(g)
+            time.sleep(0.2)
+        if golds and before is not None:
+            after = max(golds)
+            if after - before >= 600:
+                return True, f"돈 {before} -> {after}"
+            if after - before <= -150:
+                return False, f"돈 {before} -> {after}"
+        return None, f"아직 모름 (돈 {before} -> {golds})"
 
     def read_gold(self, img: np.ndarray) -> int | None:
         text = self.ocr.text(img, (1700, 15, 1910, 85)).replace(",", "")
@@ -226,16 +262,27 @@ class Bot:
             return
         pairs = [(o.text, o.effect) for o in options]
         idx, rule = choose_option(pairs, self.run.floor, question)
+        if idx < 0 and self._declined == question:
+            # ESC로 안 닫히는 선택지: 가장 싼 쪽 (첫 번째 숫자가 가장 작은 것)
+            costs = [int(m.group(1)) if (m := re.search(r"(\d+)\s*소모", t + e)) else 10 ** 6 for t, e in pairs]
+            idx, rule = costs.index(min(costs)), "모름: ESC로 안 닫혀서 가장 싼 쪽 (기록)"
         gold_before = self.read_gold(img)
-        self.log("선택지", f"{question} -> [{idx}] '{options[idx].text}' ({rule})", img,
+        self.log("선택지", f"{question} -> [{idx}] '{options[idx].text if idx >= 0 else 'ESC'}' ({rule})", img,
                  options=pairs, chosen=idx, rule=rule)
         with self.choice_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "floor": self.run.floor,
                                 "question": question, "options": pairs, "chosen": idx, "rule": rule},
                                ensure_ascii=False) + "\n")
+        if idx < 0:
+            self._declined = question
+            self.gi.key("esc")
+            time.sleep(1.0)
+            return
+        self._declined = None
         self.gi.click(*options[idx].center)
         if rule == "650원 도박":
-            self._gamble_gold_before = gold_before
+            self._gamble_gold_before = self.read_gold_steady() or gold_before
+            self._gamble_at = time.monotonic()
         time.sleep(1.0)
 
     def saw_loading(self) -> None:
@@ -422,11 +469,11 @@ class Bot:
 
     def on_field(self, img: np.ndarray) -> str | None:
         if getattr(self, "_gamble_gold_before", None) is not None:
-            after = self.read_gold(img)
-            if after is not None:
-                won = after - self._gamble_gold_before >= 600
+            won, why = self.judge_gamble()
+            if won is not None or time.monotonic() - self._gamble_at > 12:
+                won = bool(won) if won is not None else True  # 끝까지 모르면 이어 간다 (잘못 재시작하면 이긴 판을 버린다)
                 self.gamble_won = self.gamble_won or won
-                self.log("650원", f"{'성공' if won else '실패'} ({self._gamble_gold_before} -> {after})")
+                self.log("650원", f"{'성공' if won else '실패'} ({why})", img)
                 self._gamble_gold_before = None
                 if not won:
                     self.restart_pending = "650원 도박 실패"
@@ -980,7 +1027,8 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
     q = quiz_answer(question, options)
     if q is not None:
         return q, "퀴즈 정답지"
-    texts = [(t + " " + e).replace(" ", "") for t, e in options]
+    # OCR이 "획득"을 "획티", "획듣"처럼 읽는다 (운명과 흥정: 공짜 선택지를 놓치고 50원짜리를 골랐다)
+    texts = [re.sub(r"획.", "획득", (t + " " + e).replace(" ", "")) for t, e in options]
     for i, s in enumerate(texts):
         if "650" in s and floor <= GAMBLE_LAST_FLOOR:
             return i, "650원 도박"
@@ -1003,8 +1051,11 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
     if hundred and thirty and set(hundred) != set(thirty):
         return (hundred[0], "100원 (6층 이하)") if floor <= 6 else (thirty[0], "30원 (7층 이상)")
     for i, s in enumerate(texts):
-        if "획득" in s and "소모" not in s and "차감" not in s:
+        if ("획득" in s or "회복" in s) and "소모" not in s and "차감" not in s:
             return i, "모름: 잃는 것 없는 쪽 (기록)"
+    if texts and all("소모" in s or "차감" in s for s in texts):
+        # 전부 돈/소리를 내는 선택지 (예: 소리 10개를 140원/90원에): 사지 않고 ESC로 나간다
+        return -1, "모름: 전부 돈이 들어서 안 고름 (기록)"
     return 0, "모름: 첫 번째 (기록)"
 
 

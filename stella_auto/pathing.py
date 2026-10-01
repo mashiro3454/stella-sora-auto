@@ -143,7 +143,8 @@ class Navigator:
                            f"출구 {'(%d, %d)' % tuple(room.exit) if room.exit else '모름'}, 전에 막힌 칸 {len(self.map.soft)}개)")
         elif at_entrance:
             self.room = self.memory.add(kind, floor, entry)
-            self.log("지도", f"처음 보는 지도 -> {self.room.id}로 기억")
+            near = f" (비슷했던 지도 {self.memory.last_candidates})" if self.memory.last_candidates else ""
+            self.log("지도", f"처음 보는 지도 -> {self.room.id}로 기억{near}")
         else:
             self.room = None
             self.log("지도", "방 중간이라 어떤 지도인지 모름 (이번 방은 기억하지 않음)")

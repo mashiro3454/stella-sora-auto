@@ -24,7 +24,7 @@ from .odometry import shift_between, small_gray
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DIR = ROOT / "data" / "rooms"
 MATCH_RESPONSE = 0.2  # 입구 화면이 이만큼 맞아야 같은 지도
-MATCH_NCC = 0.55
+MATCH_NCC = 0.7  # 같은 지도 입구는 0.9~0.99. 0.57로 엉뚱한 지도를 알아본 일이 있었다
 
 
 @dataclass
@@ -45,6 +45,7 @@ class RoomMemory:
         self.dir = Path(directory)
         self.rooms: dict[str, Room] = {}
         self._refs: dict[str, np.ndarray] = {}
+        self.last_candidates: list = []
         index = self.dir / "index.json"
         if index.exists():
             for d in json.loads(index.read_text(encoding="utf-8")):
@@ -62,6 +63,7 @@ class RoomMemory:
         """입구 화면으로 아는 지도인지 찾는다. (방, 밀린 양, 점수) 또는 None."""
         cur = small_gray(img)
         best = None
+        self.last_candidates: list = []  # 기준엔 못 미쳤지만 비슷했던 지도 (기록용)
         for r in self.rooms.values():
             if room and r.room and r.room != room:
                 continue
@@ -74,6 +76,8 @@ class RoomMemory:
             ncc = _aligned_ncc(ref, cur, dx, dy)
             if ncc >= MATCH_NCC and (best is None or ncc > best[2]):
                 best = (r, (dx, dy), ncc)
+            if ncc >= 0.4:
+                self.last_candidates.append((r.id, round(ncc, 2), round(resp, 2)))
         return best
 
     def add(self, room: str, floor: int, img: np.ndarray) -> Room:
