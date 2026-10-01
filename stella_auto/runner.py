@@ -16,7 +16,6 @@ import os
 import re
 import sys
 import time
-from dataclasses import asdict
 from pathlib import Path
 
 import cv2
@@ -32,6 +31,8 @@ from .gamedata import default_gamedata
 from . import killswitch
 from .input import GameInput, NotFocusedError, release_all_keys
 from .ocr import KoreanOcr
+from . import record as rc
+from .score import RecordResult, score_record
 from .pathing import Goal, Navigator
 from .preset import Preset
 from .screen import ScreenDetector, StableDetector
@@ -110,6 +111,12 @@ class Bot:
         self.trade_tick = 0
         self.gamble_won = False
         self.require_gamble = True
+        self.stop_after_tower = False
+        self.max_runs = 0  # 이만큼 기록을 저장하면 멈춤 (0이면 계속)
+        self.runs_done = 0
+        self.restarts = 0
+        self.deadline: float | None = None  # 이 시각이 지나면 새 판을 시작하지 않는다
+        self.run_tracked = False  # 이 판을 봇이 1층부터 봤는지 (잠재 레벨 기억이 온전한지)
         self.restart_pending = ""
         log_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -180,6 +187,12 @@ class Bot:
             return
         self._last_cards = None
         d = self.chooser.choose_enhance(cards, self.run) if enhance else self.chooser.choose(cards, self.run)
+        if d.action in ("reroll", "restart") and not self.run_tracked:
+            # 중간에 켠 판: 지금 가진 잠재와 층을 몰라서 리롤/재시작 판단을 믿을 수 없다.
+            # (20층에서 1층 규칙으로 리롤 5번 하고 판을 포기한 일이 있었다) 층 제한 없이 가장 나은 카드를 고른다
+            vals = {c.slot: self.chooser.value(c, self.run, ignore_floor=True)[0] for c in cards}
+            best = max(cards, key=lambda c: vals[c.slot] if vals[c.slot] is not None else -1)
+            d = type(d)("pick", best, "중간에 켠 판이라 리롤/재시작 대신 가장 나은 카드", vals)
         desc = [f"{c.potential.name if c.potential else c.raw_name}({'새' if c.is_new else c.level_from}>{c.level_to})"
                 f"={d.values.get(c.slot)}" for c in cards]
         self.log("카드", f"{'강화 ' if enhance else ''}{d.action} {d.reason} | {', '.join(desc)} | 돈 {self.run.gold}", img)
@@ -525,7 +538,7 @@ class Bot:
 
         # 2-2) 전투방은 전투가 끝나야("소리 획득") 나간다. 출구는 전투 중에도 보인다
         if not self.combat_done:
-            limit = COMBAT_TIMEOUT if not self.joined_midway else 40.0
+            limit = COMBAT_TIMEOUT if not self.joined_midway else (120.0 if self.run.floor == 20 else 40.0)
             if now - self.floor_changed_at < limit:
                 time.sleep(0.15)  # 자동 전투로 캐릭터가 움직이니 위치를 자주 잰다
                 return None
@@ -554,7 +567,7 @@ class Bot:
         self.idle_since = None
         if self.exit_seen_at is None:
             self.exit_seen_at = now
-        if self.require_gamble and not self.gamble_won and self.run.floor >= GAMBLE_LAST_FLOOR:
+        if self.require_gamble and self.run_tracked and not self.gamble_won and self.run.floor >= GAMBLE_LAST_FLOOR:
             # 3층에서도 650원 NPC가 나올 수 있다. 출구가 보인 뒤에도 잠깐 NPC를 더 찾고 나서 판단한다
             if self.run.floor == GAMBLE_LAST_FLOOR and now - self.exit_seen_at < GAMBLE_EXIT_WAIT:
                 time.sleep(0.5)
@@ -652,6 +665,8 @@ class Bot:
             elif s == "esc_map":
                 self.gi.key("esc")
                 time.sleep(0.5)
+            elif s == "record_result":
+                return "tower_done"  # 20층까지 끝나고 기록 화면
             else:
                 self.log("화면", f"예상 못 한 화면 {s}, 기다림")
                 time.sleep(1.0)
@@ -667,12 +682,14 @@ class Bot:
     def start_from_menu(self, give_up: bool = False) -> None:
         deadline = time.monotonic() + 180
         departed = False
+        gave_up = False  # 이번에 포기를 눌렀는지. 안 눌렀는데 기록 화면이면 끝까지 간 판이라 저장한다
         while time.monotonic() < deadline:
             img = self.grab()
             s = self.det.detect(img).state
             if s == "field":
                 if departed:
                     self.run = RunState(floor=1)
+                    self.run_tracked = True
                     self.new_floor(1, "전투")
                     self.gamble_won = False
                     self.log("시작", "새 판 1층")
@@ -680,7 +697,11 @@ class Bot:
                 if give_up:
                     self.gi.key("esc")
             elif s == "esc_map":
-                self.gi.key("q")
+                if give_up:
+                    self.gi.key("q")
+                    gave_up = True
+                else:
+                    self.gi.key("esc")
             elif s == "notice":
                 text = self.ocr.text(img, (300, 250, 1620, 750))
                 if "분해" in text:
@@ -690,7 +711,10 @@ class Bot:
             elif s in TAP_STATES:
                 self.gi.click(*EMPTY_SPOT)
             elif s == "record_result":
-                self.gi.click(*BTN_TRASH)
+                if gave_up:
+                    self.gi.click(*BTN_TRASH)  # 중간에 포기한 기록은 분해
+                else:
+                    self.save_record()  # 끝까지 간 판의 기록 (봇을 기록 화면에서 켰을 때)
             elif s == "difficulty_select":
                 self.gi.click(*BTN_DEPART)
             elif s in ("team_setup", "record_combo"):
@@ -702,6 +726,79 @@ class Bot:
                 self.gi.key("space")
             time.sleep(0.9)
         raise Stop("재시작이 3분 안에 안 끝남")
+
+    # -- 기록 저장 -------------------------------------------------------------
+    def save_record(self) -> None:
+        """탑이 끝난 기록 화면: 점수를 장부에 적고, 이름을 저장한 시각으로 바꾸고, "기록 저장".
+        (사용자 규칙 2026-10-02. 흐름은 stella_auto/record.py 맨 위)"""
+        name = rc.record_name()
+        img = self.grab()
+        # 1) 레코드 스킬 탭에서 평점 레벨, 협주스킬 레벨
+        self.gi.click(*rc.TAB_SKILLS)
+        time.sleep(1.0)
+        skills = self.grab()
+        level = rc.read_record_level(skills, self.ocr)
+        ensemble = rc.read_ensemble_levels(skills, self.ocr)
+        self.gi.click(*rc.TAB_POTENTIALS)
+        time.sleep(0.6)
+        # 2) 점수 (잠재 레벨은 봇이 판 내내 기억한 것)
+        gd = default_gamedata()
+        result = score_record(self.preset, RecordResult(
+            potential_levels=dict(self.run.owned), ensemble_levels=[v or 0 for v in ensemble], notes={},
+            record_level=level or 0))
+        pots = {gd.potentials[pid].name if pid in gd.potentials else str(pid): lv for pid, lv in self.run.owned.items()}
+        # 3) 이름 바꾸기
+        renamed = self.rename_record(name)
+        # 4) 기록 저장 → "기록 저장 성공" → 확인
+        self.gi.click(*rc.SAVE_BUTTON)
+        ok = False
+        for _ in range(8):
+            time.sleep(0.8)
+            im = self.grab()
+            if self.det.detect(im).state == "notice":
+                text = self.ocr.text(im, rc.NOTICE_TEXT_BOX).replace(" ", "")
+                ok = "저장성공" in text or "성공" in text
+                if not ok:
+                    self.log("기록", f"저장 안내가 예상과 다름: {text!r} (멈춤)", im)
+                    raise Stop(f"기록 저장 중 모르는 안내: {text}")
+                self.gi.click(*rc.NOTICE_OK)
+                break
+        rec = rc.SavedRecord(name=name if renamed else "이름 없는 기록", saved_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+                             floor_reached=self.run.floor, record_level=level, ensemble_levels=ensemble,
+                             potentials=pots, score=round(result.total), discard_reasons=result.discard_reasons,
+                             tracked=self.run_tracked, note="" if ok else "저장 성공 안내를 못 봄")
+        rc.append_ledger(self.log_path.parent / "records.jsonl", rec)
+        self.log("기록", f"저장 {rec.name}: 평점 {level}, 협주 {ensemble}, 점수 {rec.score}"
+                         f"{' (버릴 조건: ' + ', '.join(result.discard_reasons) + ')' if result.discard_reasons else ''}"
+                         f"{'' if self.run_tracked else ' (중간에 켠 판이라 잠재 레벨이 빠져 있음)'}", img)
+        self.run_tracked = False
+        time.sleep(1.5)
+
+    def rename_record(self, name: str) -> bool:
+        """기록 화면 연필 → 이름 칸 → 이름 입력 → 확인. 바뀐 이름을 읽어 확인한다."""
+        for attempt in range(2):
+            self.gi.click(*rc.PENCIL)
+            time.sleep(1.2)
+            if "이름" not in self.ocr.text(self.grab(), rc.RENAME_TITLE_BOX).replace(" ", ""):
+                self.log("기록", "이름 변경 창이 안 열림")
+                continue
+            self.gi.click(*rc.NAME_FIELD)
+            time.sleep(0.6)
+            for _ in range(14):
+                self.gi.key("backspace", hold=0.03)
+                time.sleep(0.03)
+            self.gi.type_text(name)
+            time.sleep(0.4)
+            self.gi.click(*rc.RENAME_OK)
+            time.sleep(1.2)
+            got = re.sub(r"[^0-9]", "", self.ocr.text(self.grab(), rc.NAME_BOX))
+            if got == name.replace("_", ""):
+                return True
+            self.log("기록", f"이름이 {got!r}로 읽힘 (원하는 이름 {name})")
+        return False
+
+    def time_up(self) -> bool:
+        return self.deadline is not None and time.monotonic() > self.deadline
 
     def read_floor_from_map(self) -> None:
         """탑 안에서 시작할 때: ESC 지도의 "3/20층 전투의 방"으로 지금 층을 안다.
@@ -765,11 +862,22 @@ class Bot:
             self.start_from_menu(give_up=False)
         while True:
             r = self.run_floor()
-            if r == "next_floor":
+            if r == "tower_done":
+                self.save_record()
+                self.runs_done += 1
+                self.log("끝", f"탑 {self.runs_done}판째 끝 (그사이 재시작 {self.restarts}번)")
+                if self.stop_after_tower or (self.max_runs and self.runs_done >= self.max_runs) or self.time_up():
+                    return
+                self.start_from_menu(give_up=False)
+            elif r == "next_floor":
                 if self.run.floor - 1 >= max_floors:
                     self.log("끝", f"{max_floors}층까지 넘김")
                     return
             else:
+                self.restarts += 1
+                if self.time_up():
+                    self.log("끝", f"정한 시간이 지나서 멈춤 (탑 {self.runs_done}판, 재시작 {self.restarts}번)")
+                    return
                 self.restart(self.restart_pending or "층 실패")
 
 
@@ -875,7 +983,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m stella_auto.runner", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("preset", type=Path, help="프리셋 JSON (python -m stella_auto.preset ... -o 로 만든 것)")
-    ap.add_argument("--floors", type=int, default=3, help="이만큼 층을 넘기면 멈춤")
+    ap.add_argument("--floors", type=int, default=20, help="시험용: 이만큼 층을 넘기면 멈춤 (기본 20 = 끝까지)")
+    ap.add_argument("--runs", type=int, default=0, help="탑을 이만큼 끝내면(기록 저장) 멈춤. 0이면 계속")
+    ap.add_argument("--hours", type=float, default=0, help="이만큼 시간이 지나면 다음 판을 시작하지 않고 멈춤. 0이면 계속")
     ap.add_argument("--no-gamble", action="store_true", help="시험용: 650원 도박 조건 없이 계속 올라간다")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
@@ -892,6 +1002,8 @@ def main(argv: list[str] | None = None) -> int:
     pid_file.write_text(str(os.getpid()))
     bot = Bot(Preset.load(args.preset))
     bot.require_gamble = not args.no_gamble
+    bot.max_runs = args.runs
+    bot.deadline = time.monotonic() + args.hours * 3600 if args.hours else None
 
     def emergency_stop() -> None:
         # 메인 스레드가 키를 누르는 중일 수 있으니, 누를 수 있는 키를 전부 뗀다

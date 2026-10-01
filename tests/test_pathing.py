@@ -226,3 +226,11 @@ def test_visible_wall_is_avoided_before_bumping(tmp_path):
         assert res.reason == "arrived"
         bumps[paint] = len(nav.map.blocked)
     assert bumps[True] < bumps[False]
+
+
+def test_record_name_format():
+    from stella_auto import record as rc
+    import time as _t
+    t = _t.mktime((2026, 10, 2, 1, 58, 0, 0, 0, -1))
+    assert rc.record_name(t) == "1002_0158"
+    assert rc.is_bot_record_name("1002_0158") and not rc.is_bot_record_name("이름 없는 기록")

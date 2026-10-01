@@ -21,13 +21,15 @@ MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_SCANCODE = 0x0008
+KEYEVENTF_UNICODE = 0x0004
+VK_BACK = 0x08
 VK_MENU = 0x12
 
 # Unity 게임은 가상 키코드보다 스캔코드를 더 잘 받는다
 SCANCODES = {
     "esc": 0x01, "1": 0x02, "2": 0x03, "3": 0x04, "q": 0x10, "w": 0x11, "e": 0x12, "r": 0x13,
     "a": 0x1E, "s": 0x1F, "d": 0x20, "f": 0x21, "z": 0x2C, "x": 0x2D, "b": 0x30,
-    "space": 0x39, "enter": 0x1C, "shift": 0x2A, "tab": 0x0F,
+    "space": 0x39, "enter": 0x1C, "shift": 0x2A, "tab": 0x0F, "backspace": 0x0E, "ctrl": 0x1D,
 }
 
 
@@ -153,6 +155,15 @@ class GameInput:
         finally:
             _send(*(_key_input(s, up=True) for s in scans))
             self._held.difference_update(names)
+
+    def type_text(self, text: str, *, pause: float = 0.05) -> None:
+        """글자를 그대로 입력한다 (유니코드 입력. 이름 바꾸기 칸 같은 데서)."""
+        for ch in text:
+            self._check_focus()
+            code = ord(ch)
+            _send(INPUT(INPUT_KEYBOARD, _INPUTUNION(ki=KEYBDINPUT(0, code, KEYEVENTF_UNICODE, 0, None))),
+                  INPUT(INPUT_KEYBOARD, _INPUTUNION(ki=KEYBDINPUT(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, None))))
+            time.sleep(pause)
 
     def set_held(self, names: tuple[str, ...]) -> None:
         """지금 누르고 있는 이동 키를 names로 바꾼다 (같은 키는 떼지 않고 계속 누른다).
