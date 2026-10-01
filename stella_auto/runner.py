@@ -863,6 +863,10 @@ class Bot:
                 else:
                     self.save_record()  # 끝까지 간 판의 기록 (봇을 기록 화면에서 켰을 때)
             elif s == "difficulty_select":
+                if (self.log_path.parent / "pause_at_menu").exists():
+                    # 사람이(또는 Claude가) 메뉴에서 할 일이 있을 때: logs/pause_at_menu 파일을 만들어 두면 여기서 멈춘다
+                    (self.log_path.parent / "pause_at_menu").unlink(missing_ok=True)
+                    raise Stop("출발 화면에서 멈춤 요청 (logs/pause_at_menu)")
                 self.gi.click(*BTN_DEPART)
             elif s in ("team_setup", "record_combo"):
                 self.gi.click(*BTN_NEXT)
