@@ -856,9 +856,18 @@ class Bot:
         deadline = time.monotonic() + 180
         departed = False
         gave_up = False  # 이번에 포기를 눌렀는지. 안 눌렀는데 기록 화면이면 끝까지 간 판이라 저장한다
+        last = None
+        repeats = 0
         while time.monotonic() < deadline:
             img = self.grab()
             s = self.det.detect(img).state
+            if s != last:
+                self.log("메뉴", f"화면 {s}")  # 재시작이 막힐 때 어디서 막혔는지 보려고
+                last, repeats = s, 0
+            else:
+                repeats += 1
+                if repeats in (15, 40):
+                    self.log("메뉴", f"화면 {s}에서 {repeats}번째", img)
             if s == "field":
                 if departed:
                     self.run = RunState(floor=1)
@@ -887,7 +896,7 @@ class Bot:
             elif s in TAP_STATES:
                 self.gi.click(*EMPTY_SPOT)
             elif s == "record_result":
-                if gave_up:
+                if gave_up or give_up:  # 포기하려고 들어온 길이면 이 기록은 포기한 판
                     self.gi.click(*BTN_TRASH)  # 중간에 포기한 기록은 분해
                 else:
                     self.save_record()  # 끝까지 간 판의 기록 (봇을 기록 화면에서 켰을 때)
