@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DIR = ROOT / "data" / "rooms"
 MATCH_RESPONSE = 0.2  # 입구 화면이 이만큼 맞아야 같은 지도
 MATCH_NCC = 0.7  # 같은 지도 입구는 0.9~0.99. 0.57로 엉뚱한 지도를 알아본 일이 있었다
+EXIT_HISTORY = 8
 
 
 @dataclass
@@ -36,6 +37,7 @@ class Room:
     exit: list[float] | None = None  # 출구 월드 좌표 (나간 자리들의 평균)
     exit_count: int = 0
     exit_conflicts: int = 0  # 기억한 출구와 크게 다른 자리로 나간 횟수 (연속)
+    exits: list[list] = field(default_factory=list)  # 최근에 나간 자리들 (최대 EXIT_HISTORY개)
     npcs: list[list] = field(default_factory=list)  # [x, y, 종류] 말을 건 자리 (종류: npc, shop, enhance)
     nav: dict = field(default_factory=dict)  # NavMap.to_json()
     updated: str = ""
@@ -100,6 +102,7 @@ class RoomMemory:
         if floor not in r.floors:
             r.floors.append(floor)
         if exit_pos is not None:
+            r.exits = (r.exits + [[round(exit_pos[0]), round(exit_pos[1])]])[-EXIT_HISTORY:]
             far = r.exit is not None and math.hypot(exit_pos[0] - r.exit[0], exit_pos[1] - r.exit[1]) > 300
             if far and r.exit_count >= 2 and r.exit_conflicts < 1:
                 # 여러 번 확인한 출구와 많이 다르다: 이번 판 위치 재기가 틀어졌을 수 있어서 한 번은 무시한다
@@ -115,6 +118,18 @@ class RoomMemory:
         r.nav = nav.to_json()  # 이번 지도는 기억에서 꺼낸 지도에 이어 그린 것이라 그대로 저장
         r.updated = time.strftime("%Y-%m-%d %H:%M:%S")
         self.save()
+
+    @staticmethod
+    def exit_scattered(r: Room) -> bool:
+        """최근에 나간 자리들이 서로 멀다: 이 지도에선 위치 재기가 흔들려서 (계단 등) 출구 기억을 믿을 수 없다.
+        (r0012: 4·8·11·15층에 나오는 계단 방. 나간 자리가 1000px 넘게 흩어져 기억한 출구로 헤맸다)"""
+        pts = r.exits[-5:]
+        if len(pts) < 3:
+            return False
+        mx = sorted(p[0] for p in pts)[len(pts) // 2]
+        my = sorted(p[1] for p in pts)[len(pts) // 2]
+        near = sum(math.hypot(p[0] - mx, p[1] - my) < 300 for p in pts)
+        return near < 0.6 * len(pts)
 
     def add_spot(self, r: Room, pos: tuple[float, float], kind: str) -> bool:
         """NPC/상점/강화머신 앞에 섰던 자리. 같은 지도에서 NPC는 바뀌어도 서 있는 자리는 같다

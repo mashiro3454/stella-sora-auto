@@ -141,10 +141,13 @@ class Navigator:
             # 입구 화면은 기억해 둔 입구 화면에서 (dx, dy)만큼 밀려 있다: 좌표를 기억 쪽 기준으로 옮긴다
             self.odo.shift_origin(-dx, -dy)
             self.map = NavMap.from_json(room.nav) if room.nav else NavMap()
-            if room.exit:
+            scattered = self.memory.exit_scattered(room)
+            if room.exit and not scattered:
                 self.memory_exit = (float(room.exit[0]), float(room.exit[1]))
             self.log("지도", f"아는 지도 {room.id} (일치 {score:.2f}, {room.visits}번 와 봄, "
-                           f"출구 {'(%d, %d)' % tuple(room.exit) if room.exit else '모름'}, 전에 막힌 칸 {len(self.map.soft)}개)")
+                           f"출구 {'(%d, %d)' % tuple(room.exit) if room.exit else '모름'}"
+                           f"{' - 나간 자리가 들쭉날쭉해서 안 씀' if room.exit and scattered else ''}, "
+                           f"전에 막힌 칸 {len(self.map.soft)}개)")
         elif at_entrance:
             self.room = self.memory.add(kind, floor, entry)
             near = f" (비슷했던 지도 {self.memory.last_candidates})" if self.memory.last_candidates else ""

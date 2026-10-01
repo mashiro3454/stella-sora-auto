@@ -268,3 +268,17 @@ def test_trusted_exit_not_overwritten_by_one_drifted_exit(tmp_path):
     assert r.exit == [-136, 52]
     mem.record(r, 19, NavMap(), (-180.0, -470.0))  # 두 번 연속이면 새 자리를 믿는다
     assert r.exit == [-180, -470] and r.exit_count == 1
+
+
+def test_scattered_exit_memory_not_used(tmp_path):
+    # r0012: 나간 자리가 매번 1000px씩 달라서 기억한 출구로 헤맸다 -> 흩어져 있으면 쓰지 않는다
+    mem = RoomMemory(tmp_path)
+    img = np.random.default_rng(3).integers(0, 255, (1080, 1920, 3), dtype=np.uint8)
+    r = mem.add("강적", 4, img)
+    for p in [(2324, -599), (2590, -765), (1744, -403), (2305, -731), (2734, -259)]:  # 07시 r0012 실제 기록
+        mem.record(r, 4, NavMap(), p)
+    assert len(r.exits) == 5 and mem.exit_scattered(r)
+    r2 = mem.add("전투", 1, img)
+    for p in [(1800, -300), (1850, -330), (1790, -310), (2600, -700)]:
+        mem.record(r2, 1, NavMap(), p)
+    assert not mem.exit_scattered(r2)
