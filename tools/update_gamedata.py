@@ -23,6 +23,8 @@ FILES = {
     "kr_item": "public/data/KR/Item.json",
     "kr_character": "public/data/KR/Character.json",
     "kr_potential": "public/data/KR/Potential.json",
+    "kr_skill": "public/data/KR/Skill.json",
+    "kr_secondary": "public/data/KR/SecondarySkill.json",
 }
 OUT = Path(__file__).resolve().parent.parent / "data" / "gamedata.json"
 
@@ -102,7 +104,12 @@ def build(sstoy_dir: Path | None) -> dict:
                 }
         characters[str(cid)] = {"name": name, "potentials": char_pots}
 
+    # 전투 중 화면에 뜨는 스킬/협주스킬 이름. NPC 이름표로 착각하지 않게 걸러내는 데 쓴다
+    skill_names = sorted({v for k, v in {**src["kr_skill"], **src["kr_secondary"]}.items()
+                          if k.endswith(".1") and isinstance(v, str) and v.strip()})
+
     return {
+        "skill_names": skill_names,
         "source": {
             "repo": REPO,
             "commit": commit,

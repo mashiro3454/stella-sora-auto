@@ -47,6 +47,7 @@ class CharacterInfo:
 class GameData:
     def __init__(self, raw: dict):
         self.source = raw.get("source", {})
+        self.skill_names: tuple[str, ...] = tuple(raw.get("skill_names", []))
         self.characters = {
             int(k): CharacterInfo(int(k), v["name"], {lk: tuple(ids) for lk, ids in v["potentials"].items()})
             for k, v in raw["characters"].items()

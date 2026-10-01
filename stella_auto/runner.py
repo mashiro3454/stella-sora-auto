@@ -20,12 +20,13 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
 
 from . import navigate as nv
 from .capture import capture, find_game_window, restore
 from .cards import read_cards, team_pool
-from .input import GameInput
+from .gamedata import default_gamedata
+from .input import GameInput, NotFocusedError
 from .ocr import KoreanOcr
 from .preset import Preset
 from .screen import ScreenDetector, StableDetector
@@ -77,6 +78,11 @@ class Bot:
         log_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
         self.log_path = log_dir / f"run_{stamp}.jsonl"
+        self.shot_dir = log_dir / "shots" / stamp
+        self.shot_dir.mkdir(parents=True, exist_ok=True)
+        gd = default_gamedata()
+        # NPC 이름표로 착각하면 안 되는 글자: 전투 중 뜨는 스킬 이름, 잠재력 이름
+        self.not_npc = [n.replace(" ", "") for n in gd.skill_names] + [p.name.replace(" ", "") for p in gd.potentials.values() if p.name]
         self.choice_path = log_dir / "choices.jsonl"
 
     # -- 기본 ---------------------------------------------------------------
@@ -94,8 +100,16 @@ class Bot:
             win = restore(win)
         return capture(win)
 
-    def log(self, kind: str, msg: str = "", **data) -> None:
+    def shot(self, img: np.ndarray, tag: str) -> str:
+        """판단한 순간의 화면을 남긴다 (나중에 왜 그렇게 했는지 보려고)."""
+        name = f"{time.strftime('%H%M%S')}_{self.run.floor:02d}_{tag}.jpg"
+        cv2.imencode(".jpg", cv2.resize(img, (1280, 720)), [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tofile(str(self.shot_dir / name))
+        return name
+
+    def log(self, kind: str, msg: str = "", img: np.ndarray | None = None, **data) -> None:
         rec = {"t": time.strftime("%H:%M:%S"), "floor": self.run.floor, "kind": kind, "msg": msg, **data}
+        if img is not None:
+            rec["shot"] = self.shot(img, kind)
         print(f"[{rec['t']}] {self.run.floor}층 {kind}: {msg}", flush=True)
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
@@ -125,7 +139,7 @@ class Bot:
         d = self.chooser.choose_enhance(cards, self.run) if enhance else self.chooser.choose(cards, self.run)
         desc = [f"{c.potential.name if c.potential else c.raw_name}({'새' if c.is_new else c.level_from}>{c.level_to})"
                 f"={d.values.get(c.slot)}" for c in cards]
-        self.log("카드", f"{'강화 ' if enhance else ''}{d.action} {d.reason} | {', '.join(desc)} | 돈 {self.run.gold}")
+        self.log("카드", f"{'강화 ' if enhance else ''}{d.action} {d.reason} | {', '.join(desc)} | 돈 {self.run.gold}", img)
         if d.action == "pick":
             self.gi.click(*d.card.click)
             time.sleep(0.35)
@@ -161,7 +175,7 @@ class Bot:
         o = options[idx][0]
         x, y, w, h = o.box
         gold_before = self.read_gold(img)
-        self.log("선택지", f"{question} -> '{o.text}' ({rule})",
+        self.log("선택지", f"{question} -> '{o.text}' ({rule})", img,
                  options=[(t.text, e) for t, e in options], chosen=idx, rule=rule)
         with self.choice_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "floor": self.run.floor,
@@ -218,6 +232,8 @@ class Bot:
                 continue
             if is_green_text(img, l.box):
                 continue  # 이름 위의 초록 글자는 NPC 종류("사건", "회복", "상점")지 이름이 아니다
+            if process.extractOne(t, self.not_npc, scorer=fuzz.ratio, score_cutoff=75):
+                continue  # 전투 중 뜨는 스킬 이름 ("무장 습격" 등)
             # 이름 바로 위의 초록 글자가 NPC 종류. OCR이 "회복"을 "화복"으로 읽기도 해서 비슷하게 맞춘다
             kind = next((o.text.replace(" ", "") for o in lines
                          if o is not l and 0 < y - o.box[1] < 80 and abs(o.box[0] + o.box[2] / 2 - (x + w / 2)) < 60
@@ -257,7 +273,7 @@ class Bot:
             name = self.nearest_label(img, char)
             if name not in self.talked:
                 self.talked.add(name)
-                self.log("NPC", f"{name}에게 F로 말 걸기")
+                self.log("NPC", f"{name}에게 F로 말 걸기", img)
                 self.gi.key("f")
                 time.sleep(1.0)
                 if self.det.detect(self.grab()).state == "field":
@@ -270,7 +286,7 @@ class Bot:
             todo = [lb for lb in self.npc_labels(img) if lb[0] not in self.talked and not lb[2]]
             if todo:
                 name, (x, y, w, h), _ = min(todo, key=lambda lb: abs(lb[1][0] - char[0]) + abs(lb[1][1] - char[1]))
-                self.log("NPC", f"{name} 쪽으로 걸어감 ({x + w // 2}, {y + h // 2})")
+                self.log("NPC", f"{name} 쪽으로 걸어감 ({x + w // 2}, {y + h // 2})", img)
                 tracker = nv.TemplateTracker(img, (x - 4, y - 4, x + w + 4, y + h + 4), threshold=0.5)
                 res = nv.walk_toward(lambda k, sec: self.gi.hold(list(k), sec), self.grab,
                                      lambda im, ch: tracker.update(im),
@@ -310,7 +326,7 @@ class Bot:
         if self.run.floor >= GAMBLE_LAST_FLOOR and not self.gamble_won:
             self.restart_pending = f"{GAMBLE_LAST_FLOOR}층까지 650원 선택지를 못 받음"
             return "restart"
-        self.log("이동", f"출구로 걸어감 {tuple(round(v) for v in target)}")
+        self.log("이동", f"출구로 걸어감 {tuple(round(v) for v in target)}", img)
 
         def tgt(im: np.ndarray, ch: tuple[float, float]) -> tuple[float, float] | None:
             t = nv.exit_target(im, ch)
@@ -375,7 +391,7 @@ class Bot:
 
     def restart(self, reason: str) -> None:
         """포기 → 분해 → 다시 출발해서 1층 필드까지."""
-        self.log("재시작", reason)
+        self.log("재시작", reason, self.grab())
         self.restart_pending = ""
         self.start_from_menu(give_up=True)
 
@@ -432,11 +448,28 @@ class Bot:
             time.sleep(0.6)
 
     def play(self, max_floors: int) -> None:
+        """게임 창이 잠깐 가려지거나 다른 창이 앞으로 와도 꺼지지 않고, 기다렸다가 화면을 다시 보고 이어 간다."""
+        fails = 0
+        while True:
+            try:
+                self._play(max_floors)
+                return
+            except NotFocusedError as e:
+                self.gi.release_all()
+                fails += 1
+                if fails >= 20:
+                    raise Stop(f"게임 창을 계속 앞으로 못 가져옴 ({e})")
+                self.log("포커스", f"{e}. 3초 뒤 다시 ({fails}/20)")
+                time.sleep(3)
+
+    def _play(self, max_floors: int) -> None:
         s = self.det.detect(self.grab()).state
-        if s != "field":
-            self.start_from_menu(give_up=False)
+        if s in ("field", "card_select", "enhance_select", "npc_choice", "dialog", "shop", "shop_buy",
+                 "esc_map", "notes_gain", "ensemble_up", "tap_continue"):
+            if s == "field":
+                self.read_floor_from_map()
         else:
-            self.read_floor_from_map()
+            self.start_from_menu(give_up=False)
         while True:
             r = self.run_floor()
             if r == "next_floor":
