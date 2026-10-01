@@ -819,6 +819,8 @@ class Bot:
                 if s == "notes_gain" and not self.combat_done:
                     self.combat_done = True
                     self.log("전투", "소리 획득 -> 전투 끝")
+                    if self.run_tracked:
+                        self.save_state()
                 self.gi.click(*EMPTY_SPOT)
                 time.sleep(0.7)
             elif s == "shop":
@@ -987,7 +989,7 @@ class Bot:
         r = self.run
         data = {"saved_at": time.time(), "floor": r.floor, "gold": r.gold, "owned": {str(k): v for k, v in r.owned.items()},
                 "lv3_new_taken": r.lv3_new_taken, "lv2_new_taken": r.lv2_new_taken, "rerolls_early": r.rerolls_early,
-                "gamble_won": self.gamble_won, "run_tracked": self.run_tracked}
+                "gamble_won": self.gamble_won, "run_tracked": self.run_tracked, "combat_done": self.combat_done}
         try:
             tmp = self.state_path().with_suffix(".tmp")
             tmp.write_text(json.dumps(data), encoding="utf-8")
@@ -1010,6 +1012,8 @@ class Bot:
         self.gamble_won = d["gamble_won"]
         self.run.keep_after_gamble = self.gamble_won
         self.run_tracked = True
+        if floor == d["floor"] and d.get("combat_done"):
+            self.combat_done = True  # 같은 방에서 전투가 이미 끝났다 (40초 기다리지 않게)
         self.log("시작", f"저장해 둔 판 상태를 이어받음 ({d['floor']}층, 잠재 {len(self.run.owned)}개, "
                        f"650원 {'성공' if self.gamble_won else '아직'})")
         return True
