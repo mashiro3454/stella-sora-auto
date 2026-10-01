@@ -1,0 +1,9 @@
+[project]
+name = "stella-sora-auto"
+version = "0.1.0"
+description = "스텔라소라 별의 탑 도자기(기록) 자동 굽기"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
