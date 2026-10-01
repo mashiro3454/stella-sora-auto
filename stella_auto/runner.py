@@ -71,6 +71,15 @@ BTN_DEPART = (1706, 978)  # 난이도 선택 "출발" (바로 왼쪽 "빠른 전
 BTN_NEXT = (1740, 994)  # 팀 편성 "다음", 레코드 조합 "전투 시작"
 BTN_TRASH = (672, 982)  # 기록 화면 휴지통(분해)
 BTN_CONFIRM = (1170, 805)  # 분해 확인 팝업 "확인"
+# 메인 화면 → 별의 탑 (2026-10-02 05:17 새벽 5시 업데이트 뒤 직접 찾아 감)
+LOBBY_BUTTONS = {
+    "tap": EMPTY_SPOT,  # "아무 곳이나 터치하여 획득하세요" / "빈 곳을 터치하여 계속하세요"
+    "attendance_close": (1668, 168),  # 매일 출석 창 X
+    "lobby_depart": (1732, 972),  # 메인 화면 오른쪽 아래 "출발"
+    "tower_hub": (1167, 520),  # "별의 탑 탐색"
+    "enter_tower": (1420, 900),  # 탑 고르기 화면 "별의 탑 들어가기"
+}
+TOWER_NAME = "불꽃과 먼지"  # 바람 프리셋 탑 (물/바람 속성이 유리한 탑)
 
 
 class Stop(Exception):
@@ -447,7 +456,9 @@ class Bot:
         return schedule[self.enhance_count] if self.enhance_count < len(schedule) else 10 ** 6
 
     def want_enhance(self, img: np.ndarray) -> bool:
-        if self.room != "거래":
+        # 상점 4번(5, 12, 19, 20층) 모두 강화머신이 있다. 20층은 보스를 잡은 뒤에 나온다
+        # (전엔 거래의 방만 봐서 20층 "강화 60"을 그냥 지나쳤다)
+        if not (self.room == "거래" or (self.run.floor == 20 and self.combat_done)):
             return False
         price = self.next_enhance_price()
         if price > ENHANCE_MAX_PRICE:
@@ -559,9 +570,11 @@ class Bot:
         self.gi.key("esc")
         time.sleep(0.8)
 
-    def nudge_until(self, prompt: str) -> bool:
-        """목표 앞에 왔는데 상호작용 표시가 안 뜨면 아래/위/왼쪽/오른쪽으로 조금씩 움직여 본다."""
-        for keys in (["s"], ["w"], ["a"], ["d"], ["s"], ["s"], ["w"], ["w"]):
+    def nudge_until(self, prompt: str, first: str = "s") -> bool:
+        """목표 앞에 왔는데 상호작용 표시가 안 뜨면 아래/위/왼쪽/오른쪽으로 조금씩 움직여 본다.
+        first="w": NPC는 이름표가 발밑보다 아래라 위쪽부터 (20층 상점 포셔 앞에서 표시가 안 떠서 포기했다)."""
+        back = "w" if first == "s" else "s"
+        for keys in ([first], [back], ["a"], ["d"], [first], [first], [back], [back]):
             self.gi.hold(keys, 0.25)
             time.sleep(0.15)
             if nv.find_prompt(self.grab()) == prompt:
@@ -679,6 +692,8 @@ class Bot:
                 res = self.nav.walk(self.label_goal(img, box, 60), self.stop_for("talk"), max_sec=15,
                                     avoid_exit=True, why=f"NPC {name}")
                 self.log("NPC", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
+                if res.reason == "arrived" and self.nudge_until("talk", first="w"):
+                    return None  # 말 걸기 표시가 떴다: 다음 화면에서 F
                 if res.reason not in ("stopped", "near_exit"):
                     self.talked.add(name)  # 못 가면 이 NPC는 포기 (무한 반복 방지)
                 elif res.reason == "near_exit":
@@ -791,6 +806,8 @@ class Bot:
         res = self.nav.walk(lambda im, ch, p: Goal(spot, kind, arrive=60), self.stop_for(prompt), max_sec=20,
                             avoid_exit=True, why=f"{kind} 자리")
         self.log("이동", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
+        if res.reason == "arrived":
+            self.nudge_until(prompt, first="w" if prompt == "talk" else "s")
         self.npc_scanned = 0.0
         return True
 
@@ -906,8 +923,30 @@ class Bot:
         self.restart_pending = ""
         self.start_from_menu(give_up=True)
 
+    def lobby_step(self, img: np.ndarray) -> str | None:
+        """메인 화면에서 별의 탑 출발 화면까지 한 걸음 (새벽 5시 데이터 업데이트 뒤 메인 화면으로 튕긴다).
+        메인 "출발" → "별의 탑 탐색" → 탑 고르기(프리셋 속성 탑) → "별의 탑 들어가기" → 난이도 선택(마지막 난이도 그대로).
+        중간의 출석/택배 보상 창은 빈 곳을 누르거나 닫는다. 한 일을 돌려준다 (모르는 화면이면 None)."""
+        lines = self.ocr.read(img, (0, 0, 1920, 1080), scale=1.0)
+        t = "".join(l.text for l in lines).replace(" ", "")
+        step = lobby_action(t)
+        if step is None:
+            return None
+        if step == "tower":
+            want = TOWER_NAME.replace(" ", "")
+            box = next((l.box for l in lines if fuzz.ratio(l.text.replace(" ", ""), want) >= 70 and l.box[0] < 960), None)
+            if box:
+                self.gi.click(box[0] + box[2] // 2, box[1] + box[3] // 2)
+                time.sleep(1.0)
+            self.gi.click(*LOBBY_BUTTONS["enter_tower"])
+        else:
+            self.gi.click(*LOBBY_BUTTONS[step])
+        self.log("메뉴", f"메인 화면 쪽: {step}")
+        time.sleep(1.5)
+        return step
+
     def start_from_menu(self, give_up: bool = False) -> None:
-        deadline = time.monotonic() + 180
+        deadline = time.monotonic() + 300
         departed = False
         gave_up = False  # 이번에 포기를 눌렀는지. 안 눌렀는데 기록 화면이면 끝까지 간 판이라 저장한다
         last = None
@@ -945,8 +984,14 @@ class Bot:
                 text = self.ocr.text(img, (300, 250, 1620, 750))
                 if "분해" in text:
                     self.gi.click(*BTN_CONFIRM)
+                elif "업데이트" in text or repeats >= 3:
+                    # 새벽 5시 "데이터가 업데이트되었습니다. 메인 화면으로 돌아갑니다." 창은 Space로 안 닫힌다
+                    # (2026-10-02 05:15에 3분 동안 Space만 눌렀다). 가운데 "확인"을 누른다
+                    self.gi.click(*rc.NOTICE_OK)
                 else:
                     self.gi.key("space")
+            elif s == "unknown" and repeats >= 2:
+                self.lobby_step(img)  # 메인 화면/출석 보상 등: 별의 탑 출발 화면까지 돌아간다
             elif s in TAP_STATES:
                 self.gi.click(*EMPTY_SPOT)
             elif s == "record_result":
@@ -1300,6 +1345,22 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
         # 전부 돈/소리를 내는 선택지 (예: 소리 10개를 140원/90원에): 사지 않고 ESC로 나간다
         return -1, "모름: 전부 돈이 들어서 안 고름 (기록)"
     return 0, "모름: 첫 번째 (기록)"
+
+
+def lobby_action(t: str) -> str | None:
+    """메인 화면 쪽 화면 글자(공백 뺀 것)로 할 일. 탑 안/출발 화면 글자와 겹치지 않는 말만 쓴다.
+    OCR이 "탑"을 자주 빼먹고("별의탐색") 큰 "출발" 글자를 못 읽어서 주변 글자로 알아본다."""
+    if "터치" in t:
+        return "tap"
+    if "출석" in t:
+        return "attendance_close"
+    if "들어가기" in t and ("원초적미로" in t or "폭풍과번개" in t or "물과그림자" in t):
+        return "tower"
+    if "현상수배" in t or "재앙의전선" in t or "연합토벌" in t:
+        return "tower_hub"
+    if ("레코드" in t and "모집" in t) or ("여행가" in t and "스토리" in t):
+        return "lobby_depart"
+    return None
 
 
 def free_note_choice(texts: list[str], note_users: dict[int, int] | None,

@@ -103,3 +103,21 @@ def test_free_notes_pick_what_ensembles_use():
     assert choose_option(opts, 2)[0] == 0
     paid = [("노래", "1400 소모, 10개의 강공의 소리 획득"), ("듣자", "900 소모, 10개의 랜덤 소리 획득"), ("지금은 안 돼.", "")]
     assert choose_option(paid, 2, note_users=users)[0] == 2
+
+
+def test_lobby_screens_lead_back_to_tower():
+    # 새벽 5시 데이터 업데이트 뒤 메인 화면으로 튕긴다: 메인 "출발" → "별의 탑 탐색" → 탑 고르고 들어가기
+    from pathlib import Path
+
+    import cv2
+    import numpy as np
+
+    from stella_auto.ocr import KoreanOcr
+    from stella_auto.runner import lobby_action
+    ocr = KoreanOcr()
+    d = Path(__file__).parent / "screens"
+    for name, want in [("unknown__lobby_main", "lobby_depart"), ("unknown__lobby_hub", "tower_hub"),
+                       ("unknown__lobby_towers", "tower")]:
+        img = cv2.imdecode(np.fromfile(str(d / f"{name}.jpg"), np.uint8), cv2.IMREAD_COLOR)
+        t = "".join(l.text for l in ocr.read(img, (0, 0, 1920, 1080), scale=1.0)).replace(" ", "")
+        assert lobby_action(t) == want, (name, t)
