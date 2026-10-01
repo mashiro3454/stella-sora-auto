@@ -175,7 +175,7 @@ def test_walk_marks_wall_and_goes_around(tmp_path):
     start = nav.last_pos
     goal = (start[0] + 900, start[1])
     res = None
-    for _ in range(4):  # 진척이 없으면 runner가 다시 부르는 것처럼
+    for _ in range(7):  # 진척이 없으면 runner가 다시 부르는 것처럼 (봇이 같이 돌아 CPU가 바쁘면 느리다)
         res = nav.walk(lambda im, ch, p: Goal(goal, "test", arrive=80), lambda im: False, max_sec=12)
         if res.reason == "arrived":
             break

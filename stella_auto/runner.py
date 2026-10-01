@@ -91,6 +91,7 @@ class Bot:
         self.idle_since: float | None = None  # 출구를 못 찾기 시작한 때
         self.spots_tried: set = set()  # 이번 층에서 가 본 기억 속 NPC 자리
         self.npc_marker_rest_until = 0.0
+        self.char_missing_since: float | None = None
         self.room = ""  # 이 층 방 종류 (전투/선택/강적/거래/리더)
         self.talked: set[str] = set()  # 이 층에서 말 건 NPC 이름
         self.title_seen = 0.0  # 방 제목을 마지막으로 본 때
@@ -579,8 +580,15 @@ class Bot:
             time.sleep(0.15)
             return None
         if char is None:
-            time.sleep(0.2)
-            return None
+            if self.char_missing_since is None:
+                self.char_missing_since = time.monotonic()
+            if time.monotonic() - self.char_missing_since < 3:
+                time.sleep(0.2)
+                return None
+            # 체력바를 계속 못 찾는다: 카메라가 캐릭터를 따라가니 화면 가운데에 있다고 보고 계속한다
+            char = (960.0, 555.0)
+        else:
+            self.char_missing_since = None
         now = time.monotonic()
 
         prompt = nv.find_prompt(img)

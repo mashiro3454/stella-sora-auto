@@ -47,16 +47,31 @@ def angle_of_keys(keys: tuple[str, ...]) -> float | None:
 
 
 def find_character(img: np.ndarray) -> tuple[float, float] | None:
-    """캐릭터 발 위치 (화면 좌표). 체력바(초록 칸 3개 이상이 한 줄)를 못 찾으면 None."""
+    """캐릭터 발 위치 (화면 좌표). 체력바(칸이 한 줄로 늘어선 것)를 못 찾으면 None.
+
+    체력바 칸은 찬 칸이 초록, 빈 칸이 어두운 회청색이다. 체력이 반쯤 깎이면 초록 칸이 2개 남짓이라
+    (8층: 2.5칸) 초록 칸만 세면 못 찾고 봇이 4분 동안 멈춰 있었다. 그래서 빈 칸도 함께 센다.
+    """
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    mask = ((hsv[..., 0] > 35) & (hsv[..., 0] < 85) & (hsv[..., 1] > 120) & (hsv[..., 2] > 150)).astype(np.uint8)
-    n, _, st, _ = cv2.connectedComponentsWithStats(mask)
-    segs = [st[i] for i in range(1, n) if 15 <= st[i][2] <= 40 and 7 <= st[i][3] <= 15]
+    green = ((hsv[..., 0] > 35) & (hsv[..., 0] < 85) & (hsv[..., 1] > 120) & (hsv[..., 2] > 150)).astype(np.uint8)
+    empty = ((hsv[..., 0] > 100) & (hsv[..., 0] < 130) & (hsv[..., 1] > 15) & (hsv[..., 1] < 70)
+             & (hsv[..., 2] > 70) & (hsv[..., 2] < 115)).astype(np.uint8)
+
+    def segs(mask: np.ndarray, max_w: int) -> list:
+        n, _, st, _ = cv2.connectedComponentsWithStats(mask)
+        return [st[i] for i in range(1, n) if 15 <= st[i][2] <= max_w and 7 <= st[i][3] <= 15]
+
+    # 빈 칸은 칸 사이 줄이 흐려 여러 칸이 한 덩어리로 잡히기도 한다 (칸 하나 약 29px)
+    greens, empties = segs(green, 40), segs(empty, 200)
     best: list | None = None
-    for s in segs:
-        row = [t for t in segs if abs(t[1] - s[1]) <= 3 and abs(t[0] - s[0]) <= 200]
-        if len(row) >= 3 and (best is None or len(row) > len(best)):
-            best = row
+    for s0 in greens:
+        row_g = [t for t in greens if abs(t[1] - s0[1]) <= 3 and abs(t[0] - s0[0]) <= 200]
+        row_e = [t for t in empties if abs(t[1] - s0[1]) <= 3 and abs(t[0] - s0[0]) <= 200]
+        n_empty = sum(max(1, round(int(t[2]) / 29)) for t in row_e)
+        if len(row_g) >= 3 or (row_g and len(row_g) + n_empty >= 4):
+            row = row_g + row_e
+            if best is None or len(row) > len(best):
+                best = row
     if not best:
         return None
     x0 = min(t[0] for t in best)

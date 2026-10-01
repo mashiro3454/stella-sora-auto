@@ -111,3 +111,9 @@ def test_cyan_gift_boxes_are_not_markers():
     # (이 사진은 1280 저장본을 키운 것이라 진짜 표시는 조각나서 안 잡힌다. 상자만 안 잡히면 된다)
     ms = nv.find_markers(img, nv.find_character(img))
     assert all(m.icon[0] < 1100 for m in ms)
+
+
+def test_find_character_with_low_hp():
+    # 체력이 반쯤 깎여 초록 칸이 2.5칸: 빈 칸(회청색)도 세서 찾아야 한다 (8층에서 4분 멈춤)
+    x, y = nv.find_character(load("field__live_lowhp.jpg"))
+    assert abs(x - 985) < 30 and abs(y - 515) < 20
