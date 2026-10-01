@@ -45,12 +45,15 @@ SOURCES = {
     "enhance_done": "enhance_select__v1_135.jpg",
     "ensemble_banner": "ensemble_up__v1_388.jpg",
     "touch_continue": "notes_gain__v1_75.jpg",
+    "header_team": "team_setup__live.jpg",
+    "header_record_combo": "record_combo__live.jpg",
 }
 
 
 # 화면 판정(ANCHORS)에는 안 쓰고 필드에서 따로 찾는 조각: 이름 -> (샘플 화면, 자를 자리)
 EXTRA = {
     "prompt_talk": ("field__v3_5.5.jpg", (1220, 636, 1302, 728)),  # NPC 근처의 "F 대화"
+    "npc_event": ("field__live_event.jpg", (878, 245, 932, 276)),  # 이벤트 있는 NPC 머리 위 초록 "사건"
 }
 
 

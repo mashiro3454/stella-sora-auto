@@ -91,6 +91,80 @@ def find_exit_marker(img: np.ndarray, char: tuple[float, float] | None) -> ExitM
     return ExitMarker((float(icon[1][0]), float(icon[1][1])), None)
 
 
+@dataclass
+class ExitDoor:
+    center: tuple[float, float]  # 문 안 문양의 가운데
+    size: tuple[float, float]  # 문양 타원의 가로세로
+    hue: float  # 문양 고리 색 (OpenCV 색상값 0~180). 다음 방 종류마다 다르다
+
+
+def find_exit_door(img: np.ndarray, char: tuple[float, float] | None = None) -> ExitDoor | None:
+    """출구 문 안의 문양: 밝은 타원 테두리 + 안쪽이 방 종류 색.
+
+    문양은 반투명이라 안쪽 채도가 낮을 수 있고(선택의 방 파란 문양), 화면 가장자리에서 잘릴 수 있다.
+    잘린 경우 가장자리에 붙은 윤곽 점은 빼고 타원을 맞춘다. "F 대화" 동그라미처럼 안이 회색인 것은
+    채도로 거른다.
+    """
+    h_img, w_img = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    white = ((hsv[..., 1] < 70) & (hsv[..., 2] > 215)).astype(np.uint8) * 255
+    hud = np.zeros_like(white)
+    hud[:110, :420] = 1
+    hud[960:, :] = 1
+    hud[:200, 1500:] = 1
+    white[hud > 0] = 0
+    contours, _ = cv2.findContours(white, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    best: tuple[float, ExitDoor] | None = None
+    for c in contours:
+        if len(c) < 60:
+            continue
+        pts = c.reshape(-1, 2)
+        keep = (pts[:, 0] > 2) & (pts[:, 1] > 2) & (pts[:, 0] < w_img - 3) & (pts[:, 1] < h_img - 3)
+        keep &= hud[np.clip(pts[:, 1] - 3, 0, h_img - 1), pts[:, 0]] == 0  # HUD 경계에 잘린 점도 뺀다
+        pts = pts[keep]
+        if len(pts) < 50:
+            continue
+        (cx, cy), (a, b), ang = cv2.fitEllipse(pts.reshape(-1, 1, 2).astype(np.int32))
+        big, small = max(a, b), min(a, b)
+        if not (75 <= big <= 320 and small / big > 0.5):  # 75 미만은 방 제목 글자(ㅇ) 같은 것
+            continue
+        # 캐릭터 발밑의 흰 동그라미 (발 위치에서 체력바 쪽으로 조금 아래)
+        if char and math.hypot(cx - char[0], cy - char[1] - HP_BAR_TO_FEET / 2) < 150:
+            continue
+        poly = cv2.ellipse2Poly((int(cx), int(cy)), (int(a / 2), int(b / 2)), int(ang), 0, 360, 5).reshape(-1, 1, 2)
+        sample = pts[::3]
+        fit = float(np.mean([abs(cv2.pointPolygonTest(poly, (float(p[0]), float(p[1])), True)) < 4 for p in sample]))
+        if fit < 0.8:
+            continue
+        mask = np.zeros(img.shape[:2], np.uint8)
+        cv2.ellipse(mask, ((cx, cy), (a * 0.85, b * 0.85), ang), 255, -1)
+        inside = hsv[mask > 0]
+        if len(inside) < 500:
+            continue
+        colorful = inside[inside[:, 1] > 80]
+        if len(colorful) / len(inside) < 0.2:
+            continue
+        door = ExitDoor((cx, cy), (a, b), float(np.median(colorful[:, 0])))
+        if best is None or fit * big > best[0]:
+            best = (fit * big, door)
+    return best[1] if best else None
+
+
+def exit_target(img: np.ndarray, char: tuple[float, float]) -> tuple[float, float] | None:
+    """출구로 가려면 향할 화면 좌표. 문양이 보이면 문양, 아니면 가장자리 출구 표시 쪽. 둘 다 없으면 None."""
+    door = find_exit_door(img, char)
+    if door:
+        return door.center
+    marker = find_exit_marker(img, char)
+    if marker is None:
+        return None
+    if marker.direction is not None:  # 삼각형 방향으로 멀리
+        dx, dy = marker.direction
+        norm = math.hypot(dx, dy) or 1
+        return char[0] + dx / norm * 600, char[1] + dy / norm * 600
+    return marker.icon
+
+
 _TALK_TEMPLATE: np.ndarray | None = None
 TALK_THRESHOLD = 0.75
 
@@ -151,6 +225,7 @@ class TemplateTracker:
 
 # 이 걸음 수 동안 목표에 이만큼도 못 가까워지면 막힌 것으로 본다.
 # (캐릭터나 배경 움직임으로 판단하면 카메라 흔들림, 이펙트, 돌아다니는 NPC에 속는다)
+MAX_MISSES = 4  # 목표를 이만큼 연속으로 못 찾으면 포기
 STUCK_STEPS = 4
 STUCK_PROGRESS_PX = 20
 
@@ -171,6 +246,7 @@ def walk_toward(
     step_sec: float = 0.4,
     max_steps: int = 40,
     log: Callable[[str], None] = lambda s: None,
+    initial_angle: float | None = None,
 ) -> WalkResult:
     """target(img, char)이 돌려주는 화면 좌표 쪽으로 걷는다.
 
@@ -180,6 +256,8 @@ def walk_toward(
     """
     dists: list[float] = []
     detours = 0
+    last_angle: float | None = initial_angle  # 시작하자마자 목표를 놓쳐도 이 방향으로 간다
+    misses = 0
     for step in range(max_steps):
         img = grab()
         if stop(img):
@@ -190,13 +268,21 @@ def walk_toward(
             return WalkResult("lost", step)
         tgt = target(img, char)
         if tgt is None:
-            log(f"{step}: 목표를 못 찾음")
-            return WalkResult("lost", step)
+            # 문양이 잠깐 안 보이거나 화면에 반쯤 걸쳐 있을 수 있다. 가던 방향으로 몇 걸음 더 간다
+            if last_angle is None or misses >= MAX_MISSES:
+                log(f"{step}: 목표를 못 찾음")
+                return WalkResult("lost", step)
+            misses += 1
+            log(f"{step}: 목표가 안 보임, 가던 방향({last_angle:+.0f}도)으로 계속")
+            hold(keys_for_angle(last_angle), step_sec)
+            continue
+        misses = 0
         dx, dy = tgt[0] - char[0], tgt[1] - char[1]
         dist = math.hypot(dx, dy)
         if dist < arrive_dist:
             return WalkResult("arrived", step)
         ang = angle_of(dx, dy)
+        last_angle = ang
         dists.append(dist)
         if len(dists) > STUCK_STEPS and dists[-STUCK_STEPS - 1] - min(dists[-STUCK_STEPS:]) < STUCK_PROGRESS_PX:
             detours += 1

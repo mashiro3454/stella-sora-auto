@@ -53,6 +53,8 @@ ANCHORS: tuple[Anchor, ...] = (
     Anchor("header_record_manage", (180, 36, 500, 92), group="header"),
     Anchor("header_tower", (180, 36, 540, 92), group="header"),
     Anchor("header_bag", (180, 36, 540, 92), group="header"),
+    Anchor("header_team", (180, 36, 500, 92), group="header"),  # 탑 입장 전 "팀 편성"
+    Anchor("header_record_combo", (180, 36, 500, 92), group="header"),  # 탑 입장 전 "레코드 조합"
     # 팝업 제목 (위치 아이콘 + 글자)
     Anchor("popup_notice", (488, 200, 610, 246), group="popup", threshold=0.85, search=POPUP_AREA),
     Anchor("popup_buy", (488, 266, 612, 306), group="popup", threshold=0.85, search=POPUP_AREA),
@@ -93,6 +95,8 @@ STATES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("record_manage", ("header_record_manage",)),
     ("difficulty_select", ("header_tower",)),
     ("bag", ("header_bag",)),
+    ("team_setup", ("header_team",)),
+    ("record_combo", ("header_record_combo",)),
     ("field", ("toolbar_field",)),  # 전투/이동 중
 )
 

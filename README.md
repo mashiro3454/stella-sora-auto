@@ -62,6 +62,26 @@ python -m stella_auto.screen   # 켜져 있는 게임을 보면서 화면이 바
 `stella_auto/input.py`의 `GameInput`으로 클릭(`click(x, y)`, 게임 화면 좌표)과 키(`key`, `hold`)를 보낸다.
 입력 직전마다 맨 앞 창이 게임인지 확인하고, 아니면 아무것도 안 보내고 멈춘다.
 
+## 글자 인식 (OCR)
+
+`stella_auto/ocr.py`: Windows 기본 OCR(한국어)을 쓴다. 따로 받을 것 없이 한국어 Windows면 바로 된다.
+카드 이름, "레벨 2 > 3", 돈, 층, NPC 선택지 문장을 읽는다.
+
+## 카드 고르기
+
+- `stella_auto/cards.py`: 카드 화면에서 카드 이름(팀 잠재력 이름과 비슷한 것으로 맞춤), 새 잠재/업그레이드, 레벨을 읽는다.
+- `stella_auto/strategy.py`: [docs/tower-rules.md](docs/tower-rules.md)의 규칙대로 고르기, 리롤, 재시작을 정한다.
+
+## 봇 돌리기
+
+```bash
+python -m stella_auto.runner presets/바람.json --floors 3
+```
+
+게임이 난이도 선택 화면이나 탑 안에 있으면 된다. **F12를 누르면 바로 멈춘다.**
+행동 기록은 `logs/run_*.jsonl`, NPC 선택 기록은 `logs/choices.jsonl`에 남는다.
+아직 안 되는 것: 상점(들어가면 그냥 나옴), 강화머신, 사망 처리.
+
 ## 도자기 점수
 
 규칙은 [docs/tower-rules.md](docs/tower-rules.md), 코드는 `stella_auto/score.py`.
