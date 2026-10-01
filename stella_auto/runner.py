@@ -111,6 +111,7 @@ class Bot:
         self.shop_plan = None
         self.shop_queue: list = []
         self.shop_rerolled = False
+        self.shop_peeked = False
         self.trade_tick = 0
         self.gamble_won = False
         self.require_gamble = True
@@ -225,12 +226,16 @@ class Bot:
             return
         self._last_cards = None
         d = self.chooser.choose_enhance(cards, self.run) if enhance else self.chooser.choose(cards, self.run)
-        if d.action in ("reroll", "restart") and not self.run_tracked:
-            # 중간에 켠 판: 지금 가진 잠재와 층을 몰라서 리롤/재시작 판단을 믿을 수 없다.
-            # (20층에서 1층 규칙으로 리롤 5번 하고 판을 포기한 일이 있었다) 층 제한 없이 가장 나은 카드를 고른다
-            vals = {c.slot: self.chooser.value(c, self.run, ignore_floor=True)[0] for c in cards}
+        if not self.run_tracked and (d.action == "restart" or (d.action == "reroll" and
+                                                               (not self.floor_known or self.run.rerolls_this_pick >= 2))):
+            # 중간에 켠 판: 가진 잠재(와 층)를 다 몰라서 재시작 판단을 믿을 수 없다.
+            # (20층에서 1층 규칙으로 리롤 5번 하고 판을 포기한 일이 있었다) 리롤은 2번까지만, 그 뒤엔 가장 나은 카드.
+            # 층 규칙(Lv1 안 집기 등)을 지킨 점수를 먼저 보고, 다 안 되면 층 제한 없이.
+            vals = {c.slot: self.chooser.value(c, self.run)[0] for c in cards}
+            if all(v is None for v in vals.values()):
+                vals = {c.slot: self.chooser.value(c, self.run, ignore_floor=True)[0] for c in cards}
             best = max(cards, key=lambda c: vals[c.slot] if vals[c.slot] is not None else -1)
-            d = type(d)("pick", best, "중간에 켠 판이라 리롤/재시작 대신 가장 나은 카드", vals)
+            d = type(d)("pick", best, "중간에 켠 판이라 재시작/리롤 대신 가장 나은 카드", vals)
         desc = [f"{c.potential.name if c.potential else c.raw_name}({'새' if c.is_new else c.level_from}>{c.level_to})"
                 f"={d.values.get(c.slot)}" for c in cards]
         self.log("카드", f"{'강화 ' if enhance else ''}{d.action} {d.reason} | {', '.join(desc)} | 돈 {self.run.gold}", img)
@@ -308,6 +313,7 @@ class Bot:
         self.shop_plan = None
         self.shop_queue = []
         self.shop_rerolled = False
+        self.shop_peeked = False
         self.trade_tick = 0
         self.floor_changed_at = time.monotonic()
         self.loading_at = None
@@ -380,6 +386,8 @@ class Bot:
                 continue  # 왼쪽 위 아이콘/기록 점수, 오른쪽 위 레벨/돈/자동 전투
             if any(word in t for word in HUD_TEXT) or process.extractOne(t, HUD_TEXT, scorer=fuzz.ratio, score_cutoff=60):
                 continue
+            if fuzz.ratio(t, "강화") >= 80 or fuzz.ratio(t, "강화머신") >= 70:
+                continue  # 강화머신 위 글자 (NPC가 아니다)
             if time.monotonic() - self.title_seen < 3 and TITLE_BOX[0] < x < TITLE_BOX[2] and y < TITLE_BOX[3]:
                 continue
             if is_green_text(img, l.box):
@@ -432,7 +440,36 @@ class Bot:
                 return l.box
         return None
 
+    def save_full(self, img: np.ndarray, tag: str) -> None:
+        """나중에 소리 그림/이름 짝을 만들 자료: 원본 크기 화면을 logs/shop_data/에."""
+        d = self.log_path.parent / "shop_data"
+        d.mkdir(parents=True, exist_ok=True)
+        cv2.imencode(".png", img)[1].tofile(str(d / f"{time.strftime('%m%d_%H%M%S')}_{self.run.floor:02d}_{tag}.png"))
+
+    def peek_bag(self) -> None:
+        """상점에서 B로 가방(협주스킬별 필요한 소리, 가진 소리 개수)을 열어 찍어 두고 ESC로 돌아온다."""
+        self.gi.key("b")
+        time.sleep(1.2)
+        im = self.grab()
+        if self.det.detect(im).state == "bag":
+            self.save_full(im, "bag")
+            # 레코드 스킬 탭 (왼쪽 두 번째)
+            self.gi.click(220, 321)
+            time.sleep(0.8)
+            self.save_full(self.grab(), "bag_skills")
+            self.gi.key("esc")
+            time.sleep(1.0)
+        if self.det.detect(self.grab()).state == "bag":
+            self.gi.key("esc")
+            time.sleep(1.0)
+
     def on_shop(self, img: np.ndarray) -> None:
+        if self.shop_plan is None and not self.shop_peeked:
+            self.shop_peeked = True
+            self.peek_bag()
+            return
+        if self.shop_plan is None:
+            self.save_full(img, "shop")
         if self.shop_plan is None:
             gold = self.read_gold(img) or 0
             items = read_shop(img, self.ocr)
@@ -749,6 +786,9 @@ class Bot:
                 time.sleep(0.7)
             elif s == "shop":
                 self.on_shop(img)
+            elif s == "bag":
+                self.gi.key("esc")  # 가방이 열려 있으면 닫는다
+                time.sleep(0.8)
             elif s == "shop_buy":
                 self.gi.key("space")  # 구매
                 time.sleep(1.0)

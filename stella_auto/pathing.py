@@ -313,6 +313,8 @@ class Navigator:
                 else:
                     lost = 0
                 pos = self.observe(img, char)
+                if avoid_exit and self._exit_too_close(img, char or CHAR_FALLBACK, pos):
+                    return NavResult("near_exit", now - t0)
                 goal = goal_fn(img, char or CHAR_FALLBACK, pos)
                 if goal is None:
                     return NavResult("no_goal", now - t0)
@@ -368,6 +370,22 @@ class Navigator:
                 time.sleep(TICK)
         finally:
             self.gi.set_held(())
+
+    def _exit_too_close(self, img: np.ndarray, char: tuple[float, float], pos: tuple[float, float]) -> bool:
+        """아직 나가면 안 될 때: 화면에 출구 문양이 보이면 그 둘레를 피할 곳으로 정하고, 이미 가까우면 True.
+        (5층 거래의 방에서 상점을 찾으며 둘러보다 출구에 들어가 버렸다)"""
+        hue = nv.DOOR_HUE.get(self.next_kind, (None, 0))[0]
+        door = nv.find_exit_door(img, char, hue)
+        if door and nv.door_matches(door, self.next_kind):
+            w = self.odo.to_world(door.center)
+            if self.door_seen is None:
+                self.door_seen = w
+            if not any(math.hypot(c[0] - w[0], c[1] - w[1]) < 100 for c, _ in self.map.avoid):
+                self.map.avoid.append((w, EXIT_AVOID_R))
+            if math.hypot(w[0] - pos[0], w[1] - pos[1]) < EXIT_AVOID_R + 60:
+                self.log("이동", f"출구 문양이 가까워서 멈춤 ({w[0]:.0f}, {w[1]:.0f})")
+                return True
+        return False
 
     def _lookahead(self, pos: tuple[float, float], path: list[tuple[float, float]]) -> tuple[float, float]:
         """경로에서 막힌 칸 없이 곧장 갈 수 있는 가장 먼 점 (최대 400px 앞)."""
