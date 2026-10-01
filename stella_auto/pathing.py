@@ -245,7 +245,7 @@ class Navigator:
             return Goal(self.marker_goal, "marker")
         hue = nv.DOOR_HUE.get(self.next_kind, (None, 0))[0]
         door = nv.find_exit_door(img, char, hue)
-        if door and nv.door_matches(door, self.next_kind) and not self._is_false_door(self.odo.to_world(door.center)):
+        if door and nv.door_matches(door, self.next_kind) and not self._is_false_door(self.odo.to_world(door.center))                 and not self._far_from_trusted_exit(self.odo.to_world(door.center)):
             w = self.odo.to_world(door.center)
             # 같은 자리(월드 좌표)에서 두 번 보여야 문으로 믿는다 (한 번 우연히 잡힌 무늬에 끌려가지 않게)
             c = self.door_candidate
@@ -278,6 +278,12 @@ class Navigator:
         if self.room is None:
             return []
         return [(float(x), float(y)) for x, y, k in self.room.npcs if k == kind]
+
+    def _far_from_trusted_exit(self, w: tuple[float, float]) -> bool:
+        """이 지도에서 두 번 넘게 나가 본 출구가 있는데, 새로 본 문양이 거기서 멀면 무늬일 가능성이 크다."""
+        if self.memory_exit is None or self.room is None or self.room.exit_count < 2:
+            return False
+        return math.hypot(w[0] - self.memory_exit[0], w[1] - self.memory_exit[1]) > 300
 
     def _is_false_door(self, w: tuple[float, float]) -> bool:
         return any(math.hypot(w[0] - f[0], w[1] - f[1]) < 200 for f in self.false_doors)
@@ -340,10 +346,11 @@ class Navigator:
                 if goal.arrive and d < goal.arrive:
                     return NavResult("arrived", now - t0)
                 if goal.kind in ("door", "seen", "memory"):
-                    if d < 90:
+                    if d < 160:
                         if at_door_since is None:
                             at_door_since = now
-                        elif now - at_door_since > 3.0:  # 문 자리에 3초 넘게 있었는데 로딩이 안 된다
+                        elif now - at_door_since > (3.0 if d < 90 else 5.0):
+                            # 문 자리 바로 앞에서 몇 초 동안 로딩이 안 된다 (16층: 무늬 앞 80~130px에서 90초 막혔다)
                             self.mark_false_door(goal.pos, goal.kind)
                             return NavResult("false_door", now - t0)
                     else:
