@@ -713,6 +713,7 @@ class Bot:
     def play(self, max_floors: int) -> None:
         """게임 창이 잠깐 가려지거나 다른 창이 앞으로 와도 꺼지지 않고, 기다렸다가 화면을 다시 보고 이어 간다."""
         fails = 0
+        crashes = 0
         while True:
             try:
                 self._play(max_floors)
@@ -723,6 +724,17 @@ class Bot:
                 if fails >= 20:
                     raise Stop(f"게임 창을 계속 앞으로 못 가져옴 ({e})")
                 self.log("포커스", f"{e}. 3초 뒤 다시 ({fails}/20)")
+                time.sleep(3)
+            except Stop:
+                raise
+            except Exception as e:  # 밤새 돌다 생긴 예상 못 한 오류로 봇이 통째로 꺼지지 않게
+                self.gi.release_all()
+                crashes += 1
+                import traceback
+                self.log("오류", f"{type(e).__name__}: {e} ({crashes}/10)", self.grab(),
+                         traceback=traceback.format_exc())
+                if crashes >= 10:
+                    raise
                 time.sleep(3)
 
     def _play(self, max_floors: int) -> None:

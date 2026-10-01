@@ -116,7 +116,8 @@ def find_markers(img: np.ndarray, char: tuple[float, float] | None) -> list[Mark
         x, y, w, h = b[2][:4]
         return x - 2 <= c[0] <= x + w + 2 and y - 2 <= c[1] <= y + h + 2
 
-    triangles = [b for b in blobs if b not in icons and not any(inside(b[1], i) for i in icons)]
+    icon_ids = {id(i) for i in icons}  # 덩어리 안에 numpy 배열이 있어서 `in`으로 비교하면 오류가 난다
+    triangles = [b for b in blobs if id(b) not in icon_ids and not any(inside(b[1], i) for i in icons)]
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     out = []
     for icon in icons:
