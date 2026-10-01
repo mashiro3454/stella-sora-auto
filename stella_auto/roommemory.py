@@ -108,9 +108,10 @@ class RoomMemory:
 
     def save(self) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
-        data = [r.__dict__ for r in sorted(self.rooms.values(), key=lambda r: r.id)]
+        # 방 하나를 한 줄로 (칸 목록이 길어서 들여쓰기하면 파일이 너무 길어진다)
+        rows = [json.dumps(r.__dict__, ensure_ascii=False) for r in sorted(self.rooms.values(), key=lambda r: r.id)]
         tmp = self.dir / "index.json.tmp"
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.write_text("[\n" + ",\n".join(rows) + "\n]\n", encoding="utf-8")
         tmp.replace(self.dir / "index.json")
 
 

@@ -195,6 +195,12 @@ class Navigator:
             w = self.odo.to_world(door.center)
             # 같은 자리(월드 좌표)에서 두 번 보여야 문으로 믿는다 (한 번 우연히 잡힌 무늬에 끌려가지 않게)
             c = self.door_candidate
+            if c is None:  # 처음 봤으면 화면을 바로 한 번 더 보고 확인한다 (그사이 둘러보러 가 버리지 않게)
+                img2 = self.grab()
+                char2 = nv.find_character(img2) or CHAR_FALLBACK
+                self.odo.update(img2)
+                d2 = nv.find_exit_door(img2, char2, hue)
+                c = self.odo.to_world(d2.center) if d2 and nv.door_matches(d2, self.next_kind) else None
             if c and math.hypot(w[0] - c[0], w[1] - c[1]) < 200:
                 self.door_seen = w
                 return Goal(w, "door")
