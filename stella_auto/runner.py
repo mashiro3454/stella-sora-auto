@@ -25,6 +25,7 @@ from rapidfuzz import fuzz, process
 from . import navigate as nv
 from .capture import capture, find_game_window, restore
 from .cards import read_cards, team_pool
+from .choices import find_option_boxes, read_choices
 from .gamedata import default_gamedata
 from . import killswitch
 from .input import GameInput, NotFocusedError, release_all_keys
@@ -41,7 +42,7 @@ GAMBLE_LAST_FLOOR = 3  # 650원 도박은 1~3층에서만 나온다
 TITLE_BOX = (600, 40, 1320, 230)  # 방에 들어가면 잠깐 뜨는 "선택의 방 / 2/20층"
 TITLE_FLOOR_RE = re.compile(r"(\d+)\s*/\s*20")
 ROOM_NAMES = ("전투", "선택", "강적", "거래", "리더")
-HUD_TEXT = ("기록점수", "자동전투", "전투중", "레벨", "간단히", "대화")
+HUD_TEXT = ("기록점수", "점수", "자동전투", "전투중", "레벨", "레멜", "레텔", "간단히", "대화")
 NPC_SCAN_EVERY = 2.5  # 초. 이름표 찾기(OCR 전체 화면)는 무거워서 가끔만
 TALK_COOLDOWN = 8.0  # 대화가 끝나도 "F 대화"가 한동안 남아 있어서, 말 건 뒤 이만큼은 다시 안 건다
 GAMBLE_EXIT_WAIT = 8.0  # 3층: 출구가 보여도 전투 뒤 NPC가 나올 수 있어서 이만큼 더 둘러본다
@@ -77,6 +78,8 @@ class Bot:
         self.npc_scanned = 0.0
         self._card_tries = 0
         self._last_cards: tuple | None = None  # 직전에 읽은 카드 (두 번 연속 같아야 고른다)
+        self._last_choice_bands: tuple | None = None
+        self.loading_at: float | None = None  # 층 사이 로딩을 본 때 (방 제목을 놓치면 이걸로 층을 센다)
         self.last_talk_at = 0.0
         self.exit_seen_at: float | None = None  # 이 층에서 출구를 처음 본 때
         self.floor_known = False  # 봇을 탑 중간에서 켜면 처음엔 몇 층인지 모른다
@@ -170,37 +173,33 @@ class Bot:
         time.sleep(0.8)
 
     def on_choice(self, img: np.ndarray) -> None:
-        lines = self.ocr.read(img, (1000, 300, 1920, 820))
-        if not lines:
-            time.sleep(0.4)
+        # 보기 상자는 미끄러져 들어온다. 상자 위치가 두 번 연속 같을 때 읽는다
+        bands = tuple(find_option_boxes(img))
+        if not bands or bands != self._last_choice_bands:
+            self._last_choice_bands = bands
+            time.sleep(0.3)
             return
-        question = lines[0].text if lines[0].box[1] < 430 else ""
-        # 선택지 글자는 왼쪽(큰 글씨), 효과 설명은 그 아래 오른쪽 끝
-        opts = [l for l in lines if l.box[0] < 1400 and l.box[1] >= 430 and l.box[3] >= 20]
-        effects = [l for l in lines if l.box[0] >= 1400 and l.box[1] >= 430]
-        options = []
-        for o in sorted(opts, key=lambda l: l.box[1]):
-            eff = next((e.text for e in effects if 20 < e.box[1] - o.box[1] < 110), "")
-            options.append((o, eff))
+        self._last_choice_bands = None
+        question, options = read_choices(img, self.ocr)
         if not options:
             time.sleep(0.4)
             return
-        idx, rule = choose_option([(o.text, e) for o, e in options], self.run.floor)
-        o = options[idx][0]
-        x, y, w, h = o.box
+        pairs = [(o.text, o.effect) for o in options]
+        idx, rule = choose_option(pairs, self.run.floor)
         gold_before = self.read_gold(img)
-        self.log("선택지", f"{question} -> '{o.text}' ({rule})", img,
-                 options=[(t.text, e) for t, e in options], chosen=idx, rule=rule)
+        self.log("선택지", f"{question} -> [{idx}] '{options[idx].text}' ({rule})", img,
+                 options=pairs, chosen=idx, rule=rule)
         with self.choice_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "floor": self.run.floor,
-                                "question": question, "options": [(t.text, e) for t, e in options],
-                                "chosen": idx, "rule": rule}, ensure_ascii=False) + "\n")
-        self.gi.click(x + w // 2, y + h // 2)
+                                "question": question, "options": pairs, "chosen": idx, "rule": rule},
+                               ensure_ascii=False) + "\n")
+        self.gi.click(*options[idx].center)
         if rule == "650원 도박":
             self._gamble_gold_before = gold_before
         time.sleep(1.0)
 
     def new_floor(self, floor: int, room: str) -> None:
+        self.loading_at = None
         self.run.floor = floor
         self.floor_known = True
         self.exit_seen_at = None
@@ -243,7 +242,9 @@ class Bot:
             x, y, w, h = l.box
             if not (13 <= h <= 32 and 2 <= len(t) <= 6) or len(t) < len(l.text.replace(" ", "")) / 2:
                 continue
-            if any(word in t for word in HUD_TEXT) or (x < 450 and y < 200) or (x > 1450 and y < 230):
+            if (x < 480 and y < 320) or (x > 1400 and y < 130) or (x > 1700 and y < 260):
+                continue  # 왼쪽 위 아이콘/기록 점수, 오른쪽 위 레벨/돈/자동 전투
+            if any(word in t for word in HUD_TEXT) or process.extractOne(t, HUD_TEXT, scorer=fuzz.ratio, score_cutoff=60):
                 continue
             if time.monotonic() - self.title_seen < 3 and TITLE_BOX[0] < x < TITLE_BOX[2] and y < TITLE_BOX[3]:
                 continue
@@ -278,6 +279,10 @@ class Bot:
         if self.restart_pending:
             return "restart"
         if self.check_title(img):
+            return "next_floor"
+        if self.loading_at is not None and time.monotonic() - self.loading_at > 5:
+            self.new_floor(self.run.floor + 1, "")
+            self.log("층", "방 제목을 못 읽었지만 로딩을 지나서 다음 층으로 셈")
             return "next_floor"
         if not self.floor_known:
             self.read_floor_from_map()
@@ -385,6 +390,8 @@ class Bot:
             s = d.state
             if s != last_state and s != "transition":
                 last_state = s
+            if s == "loading" and self.floor_known:
+                self.loading_at = time.monotonic()
             if s in ("transition", "loading", "unknown"):
                 time.sleep(0.2)
                 continue
@@ -468,7 +475,7 @@ class Bot:
         time.sleep(1.0)
         img = self.grab()
         if self.det.detect(img).state == "esc_map":
-            text = self.ocr.text(img, (900, 500, 1300, 620)).replace(" ", "")
+            text = self.ocr.text(img, (600, 60, 1300, 1020)).replace(" ", "")
             m = TITLE_FLOOR_RE.search(text)
             if m:
                 self.new_floor(int(m.group(1)), next((r for r in ROOM_NAMES if r in text), ""))
