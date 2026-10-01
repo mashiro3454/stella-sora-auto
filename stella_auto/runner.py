@@ -410,14 +410,16 @@ class Bot:
         lines = self.ocr.read(img, (0, 0, 1920, 960))
         out = []
         for l in lines:
-            if re.search(r"[\[\]×xX]|\d{2,}", l.text):
-                continue  # 왼쪽에 뜨는 아이템 획득 알림 "[스텔라 코인]×80"
+            if re.search(r"[\[\]×xX*]|\d{2,}", l.text):
+                continue  # 왼쪽에 뜨는 아이템 획득 알림 "[스텔라 코인]×80" (×를 *로 읽기도 한다)
             t = re.sub(r"[^가-힣]", "", l.text)  # OCR이 "4베0}트리스"처럼 섞어 읽을 때가 있어서 한글만
             x, y, w, h = l.box
             if not (13 <= h <= 32 and 2 <= len(t) <= 6) or len(t) < len(l.text.replace(" ", "")) / 2:
                 continue
-            if (x < 480 and y < 320) or (x > 1400 and y < 130) or (x > 1700 and y < 260):
-                continue  # 왼쪽 위 아이콘/기록 점수, 오른쪽 위 레벨/돈/자동 전투
+            if (x < 480 and y < 320) or (x > 1400 and y < 80) or (x > 1700 and y < 260) or (x < 330 and 330 < y < 660):
+                # 왼쪽 위 아이콘/기록 점수, 오른쪽 위 레벨/돈(y<80: 20층 상점 포셔 이름표가 y 90쯤이라 130이면 걸러졌다),
+                # 자동 전투, 왼쪽 아이템 획득 알림 줄 ("[체력의 소리]×6"을 "력의"라는 NPC로 읽고 걸어갔다)
+                continue
             if any(word in t for word in HUD_TEXT) or process.extractOne(t, HUD_TEXT, scorer=fuzz.ratio, score_cutoff=60):
                 continue
             if fuzz.ratio(t, "강화") >= 80 or fuzz.ratio(t, "강화머신") >= 70:
@@ -728,6 +730,18 @@ class Bot:
                 self.trade_tick += 1
                 if self.go_spot("enhance" if self.want_enhance(img) else "shop"):
                     return None
+                if not self.shop_done and not self.want_enhance(img) and self.trade_tick % 2 == 1:
+                    # 상점 NPC 머리 위 초록 "상점" 글자 (이름표를 못 읽어도 보인다)
+                    box = self.find_green_label(img, "상점")
+                    if box:
+                        x, y, w, h = box
+                        self.log("상점", f"'상점' 글자 쪽으로 걸어감 ({x + w // 2}, {y + h // 2})", img)
+                        res = self.nav.walk(self.label_goal(img, box, 130), self.stop_for("talk"), max_sec=15,
+                                            avoid_exit=True, why="상점 글자")
+                        self.log("상점", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
+                        if res.reason == "arrived":
+                            self.nudge_until("talk", first="w")
+                        return None
                 if self.trade_tick % 2 == 0:
                     self._explore("강화머신/상점을 찾으려고 둘러봄", avoid_exit=True)
                 else:
