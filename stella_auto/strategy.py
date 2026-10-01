@@ -78,7 +78,8 @@ class CardChooser:
         if not ignore_floor and state.floor < start_floor(goal):
             return None, f"{goal.mark}{'(목표 ' + str(goal.target_level) + ')' if goal.mark == '다다익선' else ''}은 {start_floor(goal)}층부터"
 
-        cur = state.owned.get(goal.id, 0)
+        # 업그레이드 카드는 카드에 적힌 "전 레벨"이 지금 레벨이다 (봇을 중간에 켜서 owned를 몰라도 맞게)
+        cur = card.level_from if card.level_from is not None else state.owned.get(goal.id, 0)
         main = goal.mark in ("필수", "다다익선")
         safeguard = goal.mark == "필수" and cur == 0 and state.floor >= ESSENTIAL_SAFEGUARD_FLOOR
         if card.is_new and not ignore_floor:

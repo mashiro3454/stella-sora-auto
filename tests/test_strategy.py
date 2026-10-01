@@ -133,3 +133,10 @@ def test_unknown_level_is_not_lv1(chooser):
     c.level_known = False
     v, why = chooser.value(c, RunState(floor=5))
     assert v is None and "못 읽음" in why
+
+
+
+def test_upgrade_value_uses_card_level_when_owned_unknown(chooser):
+    # 봇을 중간에 켜서 owned가 비어 있어도 "3>4"는 +1로 친다
+    v, _ = chooser.value(card("숲속 공주의 은총", 4, 3), RunState(floor=5), ignore_floor=True)
+    assert v == 100
