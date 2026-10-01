@@ -347,6 +347,9 @@ class Bot:
                 return True
             return False
         self.title_seen = now
+        if self.floor_known and floor != self.run.floor and not self.floor_uncertain                 and self.loading_at is None and now - self.floor_changed_at < 15:
+            # 방금 층이 바뀌었고 로딩도 안 봤다: 같은 제목을 잘못 읽은 것 ("1/20층"을 "11층"으로 읽어 2층으로 셌다)
+            return False
         if self.floor_known and floor != self.run.floor and not self.floor_uncertain:
             # 층은 한 번에 1씩만 오른다. OCR이 "3/20층"을 "13/20층"으로 읽는 일이 있었다
             if floor < self.run.floor:
