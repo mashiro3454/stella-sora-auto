@@ -65,8 +65,9 @@ def read_ensemble_levels(img: np.ndarray, ocr: KoreanOcr) -> list[int | None]:
     """레코드 스킬 탭의 협주스킬 6개 "레벨 N"."""
     out = []
     for box in ENSEMBLE_LEVEL_BOXES:
-        m = re.search(r"(\d+)", ocr.text(img, box).replace("레멜", "레벨"))
-        out.append(int(m.group(1)) if m else None)
+        t = ocr.text(img, box).replace("레멜", "레벨").replace(" ", "")
+        m = re.search(r"(\d+)", t)
+        out.append(int(m.group(1)) if m else (0 if "활성" in t or "성화" in t else None))  # "활성화 전" = 0레벨
     return out
 
 
