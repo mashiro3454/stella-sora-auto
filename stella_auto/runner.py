@@ -247,6 +247,8 @@ class Bot:
             time.sleep(0.35)
             self.gi.key("space")
             self.chooser.record_pick(d.card, self.run)
+            if self.run_tracked:
+                self.save_state()
         elif d.action == "reroll":
             self.gi.key("q")
             self.chooser.record_reroll(self.run)
@@ -339,6 +341,8 @@ class Bot:
         self.idle_since = None
         self.spots_tried: set = set()
         self.log("층", f"{floor}층 {room + '의 방' if room else ''}")
+        if self.run_tracked:
+            self.save_state()
         self.nav.new_room(floor, room, ROOM_BY_FLOOR.get(floor + 1, ""))
 
     def check_title(self, img: np.ndarray) -> bool:
@@ -546,6 +550,8 @@ class Bot:
                 won = bool(won) if won is not None else True  # 끝까지 모르면 이어 간다 (잘못 재시작하면 이긴 판을 버린다)
                 self.gamble_won = self.gamble_won or won
                 self.log("650원", f"{'성공' if won else '실패'} ({why})", img)
+                if self.run_tracked:
+                    self.save_state()
                 self._gamble_gold_before = None
                 if not won:
                     self.restart_pending = "650원 도박 실패"
@@ -964,6 +970,40 @@ class Bot:
             self.log("기록", f"이름이 {got!r}로 읽힘 (원하는 이름 {name})")
         return False
 
+    # -- 판 상태 저장 (봇을 껐다 켜도 이어 가게) -----------------------------------
+    def state_path(self) -> Path:
+        return self.log_path.parent / "run_state.json"
+
+    def save_state(self) -> None:
+        r = self.run
+        data = {"saved_at": time.time(), "floor": r.floor, "gold": r.gold, "owned": {str(k): v for k, v in r.owned.items()},
+                "lv3_new_taken": r.lv3_new_taken, "lv2_new_taken": r.lv2_new_taken, "rerolls_early": r.rerolls_early,
+                "gamble_won": self.gamble_won, "run_tracked": self.run_tracked}
+        try:
+            tmp = self.state_path().with_suffix(".tmp")
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            tmp.replace(self.state_path())
+        except OSError:
+            pass
+
+    def restore_state(self, floor: int) -> bool:
+        """봇을 다시 켰을 때: 몇 분 안에 저장한 같은 판 상태가 있으면 이어받는다 (층이 같거나 하나 위)."""
+        try:
+            d = json.loads(self.state_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        if time.time() - d.get("saved_at", 0) > 15 * 60 or floor not in (d["floor"], d["floor"] + 1)                 or not d.get("run_tracked"):
+            return False
+        self.run.owned = {int(k): v for k, v in d["owned"].items()}
+        self.run.lv3_new_taken = d["lv3_new_taken"]
+        self.run.lv2_new_taken = d["lv2_new_taken"]
+        self.run.rerolls_early = d["rerolls_early"]
+        self.gamble_won = d["gamble_won"]
+        self.run_tracked = True
+        self.log("시작", f"저장해 둔 판 상태를 이어받음 ({d['floor']}층, 잠재 {len(self.run.owned)}개, "
+                       f"650원 {'성공' if self.gamble_won else '아직'})")
+        return True
+
     def time_up(self) -> bool:
         return self.deadline is not None and time.monotonic() > self.deadline
 
@@ -995,6 +1035,7 @@ class Bot:
                 self.joined_midway = True  # 이 층 전투가 이미 끝났을 수 있다
                 # 1~2층이면 판 시작이나 다름없다: 650원 도박/리롤 규칙을 그대로 쓴다 (빠진 잠재는 한두 장)
                 self.run_tracked = self.run.floor <= 2
+                self.restore_state(self.run.floor)
                 self.nav.new_room(self.run.floor, self.room, ROOM_BY_FLOOR.get(self.run.floor + 1, ""), at_entrance=False)
                 return
         # 못 읽으면 계속 ESC를 누르지 않게 일단 넘어가고, 다음 방 제목의 층 번호를 그대로 믿는다

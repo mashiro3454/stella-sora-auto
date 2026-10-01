@@ -229,7 +229,16 @@ class Navigator:
     def exit_goal(self, img: np.ndarray, char: tuple[float, float], pos: tuple[float, float]) -> Goal | None:
         """출구로 가려면 어디로? 화면에서 본 것 > 이번에 본 자리 > 전에 기억한 자리."""
         if self.door_seen and math.hypot(self.door_seen[0] - pos[0], self.door_seen[1] - pos[1]) < 450:
-            return Goal(self.door_seen, "seen")  # 문 바로 앞: 가장자리 표시는 문 근처에서 흔들린다
+            # 문 바로 앞: 가장자리 표시는 문 근처에서 흔들려서 안 본다. 대신 화면의 문양으로 자리를 다시 잡는다
+            # (위치 재기가 틀어져서 3층에서 문 바로 옆에 서서 엉뚱한 자리로 가려고 했다)
+            hue = nv.DOOR_HUE.get(self.next_kind, (None, 0))[0]
+            door = nv.find_exit_door(img, char, hue)
+            if door and nv.door_matches(door, self.next_kind):
+                w = self.odo.to_world(door.center)
+                if math.hypot(w[0] - self.door_seen[0], w[1] - self.door_seen[1]) < 700 and not self._is_false_door(w):
+                    self.door_seen = w
+                    return Goal(w, "door")
+            return Goal(self.door_seen, "seen")
         markers = self.exit_markers(img, char)
         if markers:
             m = markers[0]
