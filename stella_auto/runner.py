@@ -27,7 +27,7 @@ from .capture import capture, find_game_window, restore
 from .cards import read_cards, team_pool
 from .choices import find_option_boxes, read_choices
 from .shop import plan_purchases, read_reroll, read_shop
-from .notes import NOTE_NAMES, read_needs, shop_note_type
+from .notes import NOTE_NAMES, read_needs, shop_note_type, type_from_name
 from .gamedata import default_gamedata
 from . import killswitch
 from .input import GameInput, NotFocusedError, release_all_keys
@@ -80,6 +80,7 @@ class Stop(Exception):
 class Bot:
     def __init__(self, preset: Preset, log_dir: Path = ROOT / "logs"):
         self.preset = preset
+        self.log_dir = log_dir
         self.gi = GameInput()
         self.ocr = KoreanOcr()
         self.det = ScreenDetector()
@@ -119,6 +120,7 @@ class Bot:
         self.shop_rerolled = False
         self.shop_peeked = False
         self.note_needs = None  # 가방에서 읽은 협주스킬별 필요한 소리
+        self.note_users = self._load_note_users()  # 소리 종류 -> 쓰는 협주스킬 수 (지난번 가방에서 읽은 것)
         self.trade_tick = 0
         self.gamble_won = False
         self.require_gamble = True
@@ -283,7 +285,7 @@ class Bot:
             time.sleep(0.5)
             return
         self._quiz_waits = 0
-        idx, rule = choose_option(pairs, self.run.floor, question)
+        idx, rule = choose_option(pairs, self.run.floor, question, note_users=self.note_users)
         if idx < 0 and self._declined == question:
             # ESC로 안 닫히는 선택지: 가장 싼 쪽 (첫 번째 숫자가 가장 작은 것)
             costs = [int(m.group(1) or m.group(2)) if (m := re.search(r"(\d+)\s*소모", t + e)) else 10 ** 6 for t, e in pairs]
@@ -468,6 +470,26 @@ class Bot:
         d.mkdir(parents=True, exist_ok=True)
         cv2.imencode(".png", img)[1].tofile(str(d / f"{time.strftime('%m%d_%H%M%S')}_{self.run.floor:02d}_{tag}.png"))
 
+    def _note_users_file(self) -> Path:
+        return self.log_dir / "note_users.json"
+
+    def _load_note_users(self) -> dict[int, int]:
+        """프리셋마다 협주스킬이 쓰는 소리는 같다. 상점 가방에서 읽기 전(1~4층 선택지)에도 쓰려고 저장해 둔다."""
+        try:
+            d = json.loads(self._note_users_file().read_text(encoding="utf-8"))
+            return {int(k): v for k, v in d.get(self.preset.share_code or self.preset.title, {}).items()}
+        except (OSError, ValueError, AttributeError):
+            return {}
+
+    def _save_note_users(self) -> None:
+        f = self._note_users_file()
+        try:
+            d = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        except ValueError:
+            d = {}
+        d[self.preset.share_code or self.preset.title] = {str(k): v for k, v in self.note_users.items()}
+        f.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+
     def peek_bag(self) -> None:
         """상점에서 B로 가방(협주스킬별 필요한 소리, 가진 소리 개수)을 열어 찍어 두고 ESC로 돌아온다."""
         self.gi.key("b")
@@ -482,6 +504,9 @@ class Bot:
             self.save_full(skills, "bag_skills")
             self.note_needs = read_needs(skills, self.ocr)
             self.log("상점", f"가방: {self.note_needs.summary() or '협주스킬 필요량을 못 읽음'}")
+            if sum(self.note_needs.users.values()) >= 4:
+                self.note_users = dict(self.note_needs.users)
+                self._save_note_users()
             self.gi.key("esc")
             time.sleep(1.0)
         if self.det.detect(self.grab()).state == "bag":
@@ -1230,8 +1255,10 @@ def quiz_answer(question: str, options: list[tuple[str, str]]) -> int | None:
     return best if scores[best] >= 60 else None
 
 
-def choose_option(options: list[tuple[str, str]], floor: int, question: str = "") -> tuple[int, str]:
-    """NPC 선택지 고르기 (docs/tower-rules.md "NPC 선택지 고르기"). (번호, 규칙 이름)."""
+def choose_option(options: list[tuple[str, str]], floor: int, question: str = "",
+                  note_users: dict[int, int] | None = None) -> tuple[int, str]:
+    """NPC 선택지 고르기 (docs/tower-rules.md "NPC 선택지 고르기"). (번호, 규칙 이름).
+    note_users: 소리 종류 -> 그 소리를 쓰는 협주스킬 수 (공짜 소리 고르기에 씀)."""
     q = quiz_answer(question, options)
     if q is not None:
         return q, "퀴즈 정답지"
@@ -1259,6 +1286,9 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
     if hundred and thirty and set(hundred) != set(thirty):
         return (hundred[0], "100원 (6층 이하)") if floor <= 6 else (thirty[0], "30원 (7층 이상)")
     loss = ("소모", "차감", "소실", "감소", "잃", "변화")  # "랜덤 변화", "HP 30% 소실"도 잃을 수 있는 것
+    pick = free_note_choice(texts, note_users, loss)
+    if pick is not None:
+        return pick
     for i, s in enumerate(texts):
         if ("획득" in s or "회복" in s) and not any(w in s for w in loss):
             return i, "모름: 잃는 것 없는 쪽 (기록)"
@@ -1270,6 +1300,28 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
         # 전부 돈/소리를 내는 선택지 (예: 소리 10개를 140원/90원에): 사지 않고 ESC로 나간다
         return -1, "모름: 전부 돈이 들어서 안 고름 (기록)"
     return 0, "모름: 첫 번째 (기록)"
+
+
+def free_note_choice(texts: list[str], note_users: dict[int, int] | None,
+                     loss: tuple[str, ...]) -> tuple[int, str] | None:
+    """보기가 전부 공짜 소리 ("강공의 소리 5개 획득 / 행운의 소리 5개 획득 / 랜덤 소리 5개 획득"):
+    우리 협주스킬이 가장 많이 쓰는 소리, 쓰는 소리가 없으면 랜덤 (시험, 2026-10-02 밤).
+    전엔 첫 번째를 골라서 안 쓰는 폭발의 소리를 받았다."""
+    if not note_users or len(texts) < 2:
+        return None
+    kinds: list[tuple[int, int | None, bool]] = []
+    for i, s in enumerate(texts):
+        if "소리" not in s or "획득" not in s or any(w in s for w in loss):
+            return None
+        kinds.append((i, type_from_name(s), "랜덤" in s))
+    named = [(note_users.get(t, 0), -i, i) for i, t, rnd in kinds if t is not None and not rnd]
+    if named and max(named)[0] > 0:
+        n, _, i = max(named)
+        return i, f"공짜 소리: 협주 {n}개가 쓰는 {NOTE_NAMES[kinds[i][1]]}"
+    rnd = [i for i, _, r in kinds if r]
+    if rnd:
+        return rnd[0], "공짜 소리: 쓰는 소리가 없어서 랜덤"
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:

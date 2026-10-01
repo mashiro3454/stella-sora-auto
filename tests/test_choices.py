@@ -86,3 +86,20 @@ def test_do_nothing_option_preferred_over_buying():
             ("네가 듣고 싶은 걸로 듣자.", "900 소모, 10개의 랜덤 소리 획득"), ("지금은 안 돼.", "")]
     idx, rule = choose_option(opts, 17, "노래가 듣고 싶어? 자, 같이 듣자.")
     assert idx == 3
+
+
+def test_free_notes_pick_what_ensembles_use():
+    # 바람 프리셋: 바람 6, 필살기 3, 강공 3, 행운 2, 집중 1 (가방에서 읽은 값)
+    users = {8: 6, 6: 3, 0: 3, 1: 2, 4: 1}
+    opts = [("나를 일깨워 주.", "행운의 소리흐 5개 획득"), ("나를 일깨워 주!", "필살기의 소리土 5개 획득"),
+            ("나의 길을 인도해.", "랜덤 소리 5개 획득")]
+    assert choose_option(opts, 2, note_users=users)[0] == 1
+    # 쓰는 소리가 없으면 랜덤 (전엔 첫 번째 폭발의 소리를 받았다)
+    opts = [("난 이것들뿐이야.", "1 폭발의 소리兮 5개 획득"), ("난이7것들뿐이야.", "기술의 소리 5개 획득"),
+            ("난 전부 잘 들어.", "랜덤 소리 5개 획득")]
+    idx, rule = choose_option(opts, 2, note_users=users)
+    assert idx == 2 and "랜덤" in rule
+    # 가방을 아직 못 읽었으면 예전처럼, 돈이 드는 보기가 섞이면 이 규칙이 아니다
+    assert choose_option(opts, 2)[0] == 0
+    paid = [("노래", "1400 소모, 10개의 강공의 소리 획득"), ("듣자", "900 소모, 10개의 랜덤 소리 획득"), ("지금은 안 돼.", "")]
+    assert choose_option(paid, 2, note_users=users)[0] == 2
