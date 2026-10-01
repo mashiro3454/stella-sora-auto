@@ -1,0 +1,273 @@
+{
+  "title": "새로운 빌드",
+  "characters": [
+    {
+      "slot": "master",
+      "char_id": 143,
+      "name": "레이스",
+      "potentials": [
+        {
+          "id": 514301,
+          "name": "절멸의 숨결",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 0,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 514302,
+          "name": "이중 그림자 사냥",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 1,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 514312,
+          "name": "드높은 기개",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 2,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 514305,
+          "name": "결전의 순간",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 3,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "다다익선"
+        },
+        {
+          "id": 514313,
+          "name": "강풍의 자태",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 4,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "다다익선"
+        },
+        {
+          "id": 514306,
+          "name": "칼날의 춤사위",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 5,
+          "target_level": 3,
+          "max_level": 9,
+          "mark": "다다익선"
+        },
+        {
+          "id": 514307,
+          "name": "섬광 발도",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 6,
+          "target_level": 3,
+          "max_level": 9,
+          "mark": "다다익선"
+        },
+        {
+          "id": 514311,
+          "name": "무영 사냥꾼",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 7,
+          "target_level": 1,
+          "max_level": 9,
+          "mark": "후순위"
+        }
+      ]
+    },
+    {
+      "slot": "assist1",
+      "char_id": 137,
+      "name": "엘레노어",
+      "potentials": [
+        {
+          "id": 513723,
+          "name": "기능 지속",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 0,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 513724,
+          "name": "집중 속사",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 1,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 513728,
+          "name": "관통 탄도",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 2,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 513729,
+          "name": "제압 분석",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 3,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 513730,
+          "name": "정밀 영점 조절",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 4,
+          "target_level": 3,
+          "max_level": 9,
+          "mark": "후순위"
+        },
+        {
+          "id": 513732,
+          "name": "섬멸의 잔향",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 5,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 513733,
+          "name": "전투력 증폭",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 6,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 513731,
+          "name": "바람 정령의 공명",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 7,
+          "target_level": 3,
+          "max_level": 9,
+          "mark": "다다익선"
+        }
+      ]
+    },
+    {
+      "slot": "assist2",
+      "char_id": 123,
+      "name": "안즈",
+      "potentials": [
+        {
+          "id": 512321,
+          "name": "견고한 바람 방벽",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 0,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 512323,
+          "name": "역풍의 억제",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 1,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 512330,
+          "name": "파멸의 질풍",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 2,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 512333,
+          "name": "숲속 공주의 은총",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 3,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 512328,
+          "name": "혼란스러운 흐름",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 4,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 512326,
+          "name": "바람 장벽",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 5,
+          "target_level": 3,
+          "max_level": 9,
+          "mark": "다다익선"
+        },
+        {
+          "id": 512329,
+          "name": "가속 돌파",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 6,
+          "target_level": 1,
+          "max_level": 9,
+          "mark": "후순위"
+        },
+        {
+          "id": 512332,
+          "name": "조력의 급류",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 7,
+          "target_level": 1,
+          "max_level": 9,
+          "mark": "후순위"
+        }
+      ]
+    }
+  ],
+  "share_code": "v3d-%2FkmyoumBl)7pjwD%5Dx_*VP6Ti7FWi)Z*6iH(iw%2F7*gY%7CqQm%5EBt.*%7Cz%7Dq_%25%60nER8%7DgdiY~%7D_Ge!6rq%5EO8m2h8dq1f49(k%220%22KB%5B*UoC%2B3%3FmCtj%7D%2CBw%60l%3Dn%23%3Fd*%2Fw!wOHCPfd%3Aek%24%22%2CfjymhX%2C)%2FVF.%5Do%3B%60M%26X%7Cs_%7B%3EC)_tBCAbdUFj3.%22%2Fjo%3E%3Cj5%23",
+  "warnings": [],
+  "priority": [
+    137,
+    123,
+    143
+  ]
+}

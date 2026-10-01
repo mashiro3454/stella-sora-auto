@@ -39,6 +39,20 @@ class Preset:
     characters: list[CharacterGoal]
     share_code: str
     warnings: list[str] = field(default_factory=list)
+    # 같은 점수일 때 강화할 캐릭터 순서 (char_id, 앞일수록 먼저). sstoy 링크에는 없어서 사용자가 적는다
+    priority: list[int] = field(default_factory=list)
+
+    def set_priority(self, names: list[str]) -> None:
+        """'엘레노어,안즈,레이스'처럼 이름(또는 ID)으로 순서를 정한다."""
+        by_key = {c.name: c.char_id for c in self.characters} | {str(c.char_id): c.char_id for c in self.characters}
+        unknown = [n for n in names if n not in by_key]
+        if unknown:
+            team = ", ".join(c.name for c in self.characters)
+            raise ValueError(f"팀에 없는 캐릭터: {', '.join(unknown)} (팀: {team})")
+        order = [by_key[n] for n in names]
+        if len(set(order)) != len(order):
+            raise ValueError("같은 캐릭터가 두 번 들어감")
+        self.priority = order
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
@@ -53,7 +67,7 @@ class Preset:
             CharacterGoal(**{**c, "potentials": [PotentialGoal(**p) for p in c["potentials"]]})
             for c in raw["characters"]
         ]
-        return cls(raw["title"], chars, raw["share_code"], raw.get("warnings", []))
+        return cls(raw["title"], chars, raw["share_code"], raw.get("warnings", []), raw.get("priority", []))
 
 
 def build_preset(raw: RawBuild, share_code: str, gd: GameData) -> Preset:

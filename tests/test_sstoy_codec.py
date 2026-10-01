@@ -142,8 +142,17 @@ def test_preset_warns_wrong_role():
     assert any("코어 잠재력이 3개" in w for w in preset.warnings)
 
 
+def test_preset_priority():
+    preset = load_preset(V3D)  # 피렌 / 오토하 / 코제트
+    preset.set_priority(["오토하", "142", "피렌"])
+    assert preset.priority == [145, 142, 110]
+    with pytest.raises(ValueError, match="팀에 없는"):
+        preset.set_priority(["레이스"])
+
+
 def test_preset_save_load(tmp_path):
     preset = load_preset(V3D)
+    preset.set_priority(["오토하", "코제트", "피렌"])
     path = tmp_path / "p.json"
     preset.save(path)
     assert Preset.load(path) == preset

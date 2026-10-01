@@ -77,3 +77,12 @@ def test_custom_weights():
     w = ScoreWeights(essential=50, ensemble_level=0, note=0, record_level_bonus=0)
     r = score_record(_preset(), _record(), w)
     assert r.breakdown["필수"] == 300
+
+
+def test_level_cap():
+    rec = _record()
+    rec.potential_levels[11] = 9  # 필수 9레벨이어도 6레벨까지만
+    rec.potential_levels[13] = 5  # 다다익선(목표 3)은 목표를 넘어도 6까지는 센다
+    r = score_record(_preset(), rec)
+    assert r.breakdown["필수"] == 600
+    assert r.breakdown["다다익선"] == 3 * 70 + 5 * 30

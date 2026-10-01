@@ -2,6 +2,7 @@
 
     python -m stella_auto.preset "https://jforplay.github.io/sstoy/app.html#build=v3d-..."
     python -m stella_auto.preset "<링크>" -o presets/내빌드.json
+    python -m stella_auto.preset "<링크>" --priority 엘레노어,안즈,레이스 -o presets/바람.json
 """
 
 from __future__ import annotations
@@ -34,6 +35,10 @@ def render(preset: Preset) -> str:
                 f"  {p.order + 1:>2}. {_pad(p.name, 22)} {KIND_LABELS[p.kind]}  {p.card_color:<6}  "
                 f"Lv {level:<5} {p.mark or ''}"
             )
+    if preset.priority:
+        names = {c.char_id: c.name for c in preset.characters}
+        lines.append("")
+        lines.append("동점일 때 강화 순서: " + " > ".join(names.get(cid, str(cid)) for cid in preset.priority))
     if preset.warnings:
         lines.append("")
         lines.extend(f"경고: {w}" for w in preset.warnings)
@@ -45,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("link", help="sstoy 공유 링크 또는 v3d-... 코드")
     ap.add_argument("-o", "--output", type=Path, help="프리셋 JSON 저장 경로")
+    ap.add_argument("--priority", help="동점일 때 강화할 캐릭터 순서. 예: 엘레노어,안즈,레이스")
     args = ap.parse_args(argv)
 
     if hasattr(sys.stdout, "reconfigure"):
@@ -54,6 +60,12 @@ def main(argv: list[str] | None = None) -> int:
     except ShareCodeError as e:
         print(f"해독 실패: {e}", file=sys.stderr)
         return 1
+    if args.priority:
+        try:
+            preset.set_priority([n.strip() for n in args.priority.split(",") if n.strip()])
+        except ValueError as e:
+            print(f"--priority 오류: {e}", file=sys.stderr)
+            return 1
 
     print(render(preset))
     if args.output:

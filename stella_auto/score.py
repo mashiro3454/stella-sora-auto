@@ -17,6 +17,7 @@ class ScoreWeights:
     plenty_low: float = 30  # 다다익선 (목표 3렙), 레벨당
     low: float = 5  # 후순위, 레벨당
     plenty_high_min_target: int = 6  # 다다익선 목표 레벨이 이 이상이면 plenty_high
+    max_scored_level: int = 6  # 7–9레벨은 탑 밖 아이템으로 올리는 거라 도자기 가치에서 뺀다
     ensemble_level: float = 250  # 협주스킬 활성화 레벨 총합당
     note: float = 1  # 소리 1개당
     record_level_threshold: int = 31  # 도자기 평점 레벨이 이 이상이면 공격력 버프
@@ -68,7 +69,8 @@ def score_record(preset: Preset, record: RecordResult, w: ScoreWeights | None = 
             if p.mark in ("필수", "명함만") and level == 0:
                 reasons.append(f"{p.mark} '{p.name}'({ch.name})이 없음")
             if p.mark in breakdown:
-                breakdown[p.mark] += level * potential_weight(p.mark, p.target_level, w)
+                scored = min(level, w.max_scored_level)  # 목표 레벨은 넘어도 6까지는 센다
+                breakdown[p.mark] += scored * potential_weight(p.mark, p.target_level, w)
 
     breakdown["협주스킬"] = sum(record.ensemble_levels) * w.ensemble_level
     breakdown["소리"] = sum(record.notes.values()) * w.note

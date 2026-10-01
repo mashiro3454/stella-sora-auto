@@ -18,10 +18,11 @@ C:\Users\masir\.venvs\stella-sora-auto\Scripts\python -m pip install -r requirem
 
 ```bash
 python -m stella_auto.preset "https://jforplay.github.io/sstoy/app.html#build=v3d-..."
-python -m stella_auto.preset "<링크>" -o presets/내빌드.json
+python -m stella_auto.preset "<링크>" --priority 엘레노어,안즈,레이스 -o presets/바람.json
 ```
 
 캐릭터별로 잠재력 순서, 목표 레벨, 표시(필수/후순위/다다익선/명함만), 카드 색을 보여준다.
+`--priority`는 강화머신에서 점수가 같을 때 먼저 강화할 캐릭터 순서다 (sstoy 링크에는 없는 정보).
 
 - 지원: `v3d-` (현재 sstoy), `v2d-` (구버전)
 - 미지원: `v3r-`/`v2r-` (sstoy 버그로 원래부터 데이터가 깨져 있음), `N4Ig...` (아주 옛날 형식)
