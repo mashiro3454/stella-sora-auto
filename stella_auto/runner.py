@@ -1189,6 +1189,9 @@ def main(argv: list[str] | None = None) -> int:
         bot.log("멈춤", "F12 (즉시)")
 
     killswitch.start(emergency_stop)
+    # 봇이 도는 동안 윈도우가 절전으로 들어가거나 화면을 끄지 않게 (봇이 끝나면 저절로 풀린다. 설정은 안 바꾼다)
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED, ES_DISPLAY_REQUIRED = 0x80000000, 0x00000001, 0x00000002
+    kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
     try:
         bot.play(args.floors)
     except Stop as e:
