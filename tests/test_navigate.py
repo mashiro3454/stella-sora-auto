@@ -70,3 +70,11 @@ def test_markers_exit_and_npc():
     kinds = sorted((m.icon[0], m.kind) for m in nv.find_markers(canvas, None))
     assert [k for _, k in kinds] == ["exit", "npc"]
     assert all(m.direction is not None for m in nv.find_markers(canvas, None))
+
+
+@pytest.mark.parametrize("name, kind", [
+    ("field__v3_5.5.jpg", "talk"), ("field__live_npc.jpg", "talk"),
+    ("field__v1_130.2_enhance.jpg", "enhance"), ("field__v1_20.jpg", None), ("field__live_marker.jpg", None),
+])
+def test_find_prompt(name, kind):
+    assert nv.find_prompt(load(name)) == kind

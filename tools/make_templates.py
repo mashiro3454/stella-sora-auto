@@ -54,6 +54,7 @@ SOURCES = {
 EXTRA = {
     "prompt_talk": ("field__v3_5.5.jpg", (1220, 636, 1302, 728)),  # NPC 근처의 "F 대화"
     "npc_event": ("field__live_event.jpg", (878, 245, 932, 276)),  # 이벤트 있는 NPC 머리 위 초록 "사건"
+    "prompt_enhance": ("field__v1_130.2_enhance.jpg", (1220, 624, 1302, 716)),  # 강화머신 근처의 "F 강화"
 }
 
 

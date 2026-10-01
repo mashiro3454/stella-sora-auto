@@ -26,6 +26,7 @@ from . import navigate as nv
 from .capture import capture, find_game_window, restore
 from .cards import read_cards, team_pool
 from .choices import find_option_boxes, read_choices
+from .shop import plan_purchases, read_reroll, read_shop
 from .gamedata import default_gamedata
 from . import killswitch
 from .input import GameInput, NotFocusedError, release_all_keys
@@ -56,6 +57,9 @@ ROOM_BY_FLOOR = {
     14: "전투", 15: "강적", 16: "선택", 17: "전투", 18: "강적", 19: "거래", 20: "리더",
 }
 COMBAT_ROOMS = {"전투", "강적", "리더"}
+SHOP_INDEX_BY_FLOOR = {5: 1, 12: 2, 19: 3, 20: 4}  # 몇 번째 상점인지 (20층은 보스 뒤 상점)
+TRADE_TIMEOUT = 150.0  # 거래의 방에서 강화/상점을 이만큼 못 끝내면 그냥 나간다
+ENHANCE_MAX_PRICE = 180  # 강화머신은 180원까지 누른다 (첫 상점 0-60-120-180, 그 뒤 60-120-180)
 
 # 메뉴 버튼 (게임 화면 1920x1080 기준, 실험으로 확인)
 BTN_DEPART = (1706, 978)  # 난이도 선택 "출발" (바로 왼쪽 "빠른 전투"는 절대 누르지 않는다)
@@ -95,7 +99,13 @@ class Bot:
         self.exit_seen_at: float | None = None  # 이 층에서 출구를 처음 본 때
         self.floor_known = False  # 봇을 탑 중간에서 켜면 처음엔 몇 층인지 모른다
         self.combat_done = True  # 이 층 전투가 끝났는지 ("소리 획득"을 봤는지)
+        self.enhance_count = 0  # 이 거래의 방에서 강화머신을 누른 횟수
+        self.shop_done = False
+        self.shop_plan = None
+        self.shop_queue: list = []
+        self.shop_rerolled = False
         self.gamble_won = False
+        self.require_gamble = True
         self.restart_pending = ""
         log_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -224,6 +234,11 @@ class Bot:
     def new_floor(self, floor: int, room: str) -> None:
         room = ROOM_BY_FLOOR.get(floor, "") or room  # OCR로 읽은 방 이름보다 층 구성표를 믿는다
         self.combat_done = room not in COMBAT_ROOMS
+        self.enhance_count = 0
+        self.shop_done = room != "거래"
+        self.shop_plan = None
+        self.shop_queue = []
+        self.shop_rerolled = False
         self.floor_changed_at = time.monotonic()
         self.loading_at = None
         self.run.floor = floor
@@ -306,6 +321,64 @@ class Bot:
         """OCR이 같은 이름을 "베르너/베트너/베드너"처럼 다르게 읽어서, 비슷하면 같은 NPC로 친다."""
         return any(fuzz.ratio(name, t) >= 60 for t in self.talked if t != "?")
 
+    # -- 거래의 방 (강화머신, 상점) ------------------------------------------------
+    @property
+    def shop_index(self) -> int:
+        return SHOP_INDEX_BY_FLOOR.get(self.run.floor, 1)
+
+    def next_enhance_price(self) -> int:
+        schedule = [0, 60, 120, 180] if self.shop_index == 1 else [60, 120, 180]
+        return schedule[self.enhance_count] if self.enhance_count < len(schedule) else 10 ** 6
+
+    def want_enhance(self, img: np.ndarray) -> bool:
+        if self.room != "거래":
+            return False
+        price = self.next_enhance_price()
+        if price > ENHANCE_MAX_PRICE:
+            return False
+        gold = self.read_gold(img)
+        return gold is None or gold >= price
+
+    def find_green_label(self, img: np.ndarray, word: str) -> tuple[int, int, int, int] | None:
+        """초록 글자 이름표(예: 강화머신 위 "강화")의 상자."""
+        for l in self.ocr.read(img, (0, 0, 1920, 960)):
+            t = re.sub(r"[^가-힣]", "", l.text)
+            x, y, w, h = l.box
+            if t and fuzz.ratio(t, word) >= 50 and is_green_text(img, l.box) and not (x < 480 and y < 320):
+                return l.box
+        return None
+
+    def on_shop(self, img: np.ndarray) -> None:
+        if self.shop_plan is None:
+            gold = self.read_gold(img) or 0
+            items = read_shop(img, self.ocr)
+            price, left = read_reroll(img, self.ocr)
+            if self.shop_rerolled:
+                left = 0
+            self.shop_plan = plan_purchases(items, gold, shop_index=self.shop_index, last_shop=self.run.floor >= 20,
+                                            reroll_left=left, reroll_price=price)
+            self.shop_queue = list(self.shop_plan.buy)
+            desc = ", ".join(f"{i.slot}:{i.name}({i.price}{'/' + str(i.old_price) if i.discounted else ''}"
+                             f"{' 품절' if i.sold_out else ''})" for i in items)
+            self.log("상점", f"{self.shop_index}번째 상점, {self.shop_plan.reason} | {desc}", img)
+        if self.shop_queue:
+            item = self.shop_queue.pop(0)
+            self.log("상점", f"구매: {item.name} {item.price}원")
+            self.gi.click(*item.click)
+            time.sleep(0.8)
+            return
+        if self.shop_plan.reroll and not self.shop_rerolled:
+            self.shop_rerolled = True
+            self.shop_plan = None
+            self.log("상점", "상점 새로고침 (Q)")
+            self.gi.key("q")
+            time.sleep(1.2)
+            return
+        self.log("상점", "상점 끝, 나감")
+        self.shop_done = True
+        self.gi.key("esc")
+        time.sleep(0.8)
+
     def nearest_label(self, img: np.ndarray, char: tuple[float, float]) -> str:
         labels = self.npc_labels(img)
         if not labels:
@@ -340,8 +413,20 @@ class Bot:
             return None
         now = time.monotonic()
 
-        # 1) "F 대화"가 떠 있으면, 아직 말 안 건 NPC면 말을 건다
-        if nv.find_talk_prompt(img) and now - self.last_talk_at > TALK_COOLDOWN:
+        prompt = nv.find_prompt(img)
+
+        # 0) 거래의 방 강화머신: 가까이 가면 "F 강화". 180원까지 누른다
+        if prompt == "enhance" and now - self.last_talk_at > 2.5 and self.want_enhance(img):
+            price = self.next_enhance_price()
+            self.enhance_count += 1
+            self.last_talk_at = now
+            self.log("강화", f"강화머신 {self.enhance_count}번째 ({price}원)", img)
+            self.gi.key("f")
+            time.sleep(1.2)
+            return None
+
+        # 1) "F 대화"가 떠 있으면, 아직 말 안 건 NPC면 말을 건다 (거래의 방에선 상점이 열린다)
+        if prompt == "talk" and now - self.last_talk_at > TALK_COOLDOWN:
             name = self.nearest_label(img, char)
             # 이름을 못 읽었는데 이 층에서 이미 누군가와 이야기했다면, 대개 방금 그 NPC다
             if not self.already_talked(name) and not (name == "?" and self.talked):
@@ -354,10 +439,26 @@ class Bot:
                     self.log("NPC", f"{name}: 대화가 안 열림 (이미 끝난 이벤트일 수 있음)")
                 return None
 
-        # 2) 화면에 말 안 건 NPC 이름표가 있으면 그쪽으로 걸어간다 (상점 NPC는 아직 건너뜀)
+        # 1-1) 거래의 방: 강화머신("강화" 초록 글자) 쪽으로 먼저 간다
+        if self.want_enhance(img) and now - self.npc_scanned > NPC_SCAN_EVERY:
+            self.npc_scanned = now
+            box = self.find_green_label(img, "강화")
+            if box:
+                x, y, w, h = box
+                self.log("강화", f"강화머신 쪽으로 걸어감 ({x + w // 2}, {y + h // 2})", img)
+                tracker = nv.TemplateTracker(img, (x - 4, y - 4, x + w + 4, y + h + 4), threshold=0.5)
+                res = nv.walk_toward(lambda k, sec: self.gi.hold(list(k), sec), self.grab,
+                                     lambda im, ch: (lambda c: (c[0], c[1] + 90) if c else None)(tracker.update(im)),
+                                     stop=lambda im: self.walk_stop(im) or nv.find_prompt(im) == "enhance",
+                                     arrive_dist=50, max_steps=30)
+                self.log("강화", f"걷기 결과 {res.reason} ({res.steps}걸음)")
+                return None
+
+        # 2) 화면에 말 안 건 NPC 이름표가 있으면 그쪽으로 걸어간다 (상점 NPC는 거래의 방에서 강화 뒤에만)
         if now - self.npc_scanned > NPC_SCAN_EVERY:
             self.npc_scanned = now
-            todo = [lb for lb in self.npc_labels(img) if not self.already_talked(lb[0]) and not lb[2]]
+            shop_ok = self.room == "거래" and not self.shop_done and not self.want_enhance(img)
+            todo = [lb for lb in self.npc_labels(img) if not self.already_talked(lb[0]) and (not lb[2] or shop_ok)]
             if todo:
                 name, (x, y, w, h), _ = min(todo, key=lambda lb: abs(lb[1][0] - char[0]) + abs(lb[1][1] - char[1]))
                 self.log("NPC", f"{name} 쪽으로 걸어감 ({x + w // 2}, {y + h // 2})", img)
@@ -385,6 +486,15 @@ class Bot:
                 self.log("NPC", f"표시 따라가기 결과 {res.reason} ({res.steps}걸음)")
                 self.npc_scanned = 0.0  # NPC가 화면에 들어왔을 테니 바로 이름표를 찾는다
                 return None
+
+        # 2-1-1) 거래의 방은 강화머신과 상점이 끝나야 나간다
+        if self.room == "거래" and (self.want_enhance(img) or not self.shop_done):
+            if now - self.floor_changed_at < TRADE_TIMEOUT:
+                self._explore("강화머신/상점을 찾으려고 둘러봄")
+                return None
+            self.shop_done = True
+            self.enhance_count = 99
+            self.log("상점", f"{TRADE_TIMEOUT:.0f}초 동안 강화/상점을 못 끝냄, 그냥 나감", img)
 
         # 2-2) 전투방은 전투가 끝나야("소리 획득") 나간다. 출구는 전투 중에도 보인다
         if not self.combat_done:
@@ -422,7 +532,7 @@ class Bot:
         self.idle_since = None
         if self.exit_seen_at is None:
             self.exit_seen_at = now
-        if not self.gamble_won and self.run.floor >= GAMBLE_LAST_FLOOR:
+        if self.require_gamble and not self.gamble_won and self.run.floor >= GAMBLE_LAST_FLOOR:
             # 3층에서도 650원 NPC가 나올 수 있다. 출구가 보인 뒤에도 잠깐 NPC를 더 찾고 나서 판단한다
             if self.run.floor == GAMBLE_LAST_FLOOR and now - self.exit_seen_at < GAMBLE_EXIT_WAIT:
                 time.sleep(0.5)
@@ -483,10 +593,11 @@ class Bot:
                     self.log("전투", "소리 획득 -> 전투 끝")
                 self.gi.click(*EMPTY_SPOT)
                 time.sleep(0.7)
-            elif s in ("shop", "shop_buy"):
-                self.log("상점", "아직 상점은 못 함, 나감")
-                self.gi.key("esc")
-                time.sleep(0.8)
+            elif s == "shop":
+                self.on_shop(img)
+            elif s == "shop_buy":
+                self.gi.key("space")  # 구매
+                time.sleep(1.0)
             elif s == "esc_map":
                 self.gi.key("esc")
                 time.sleep(0.5)
@@ -685,6 +796,7 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("preset", type=Path, help="프리셋 JSON (python -m stella_auto.preset ... -o 로 만든 것)")
     ap.add_argument("--floors", type=int, default=3, help="이만큼 층을 넘기면 멈춤")
+    ap.add_argument("--no-gamble", action="store_true", help="시험용: 650원 도박 조건 없이 계속 올라간다")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -699,6 +811,7 @@ def main(argv: list[str] | None = None) -> int:
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     pid_file.write_text(str(os.getpid()))
     bot = Bot(Preset.load(args.preset))
+    bot.require_gamble = not args.no_gamble
 
     def emergency_stop() -> None:
         # 메인 스레드가 키를 누르는 중일 수 있으니, 누를 수 있는 키를 전부 뗀다

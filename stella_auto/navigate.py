@@ -221,25 +221,31 @@ def exit_target(img: np.ndarray, char: tuple[float, float]) -> tuple[float, floa
     return marker_target(marker, char) if marker else None
 
 
-_TALK_TEMPLATE: np.ndarray | None = None
-TALK_THRESHOLD = 0.75
+PROMPT_THRESHOLD = 0.75
+PROMPT_AREA = (1050, 480, 1450, 860)  # 상호작용 표시는 캐릭터 오른쪽 아래 같은 자리(약 1260, 680)에 뜬다
+_PROMPTS: dict[str, np.ndarray] = {}
+
+
+def find_prompt(img: np.ndarray) -> str | None:
+    """상호작용 표시 종류: "talk"(F 대화, NPC/상점) 또는 "enhance"(F 강화, 강화머신). 없으면 None."""
+    if not _PROMPTS:
+        from .screen import TEMPLATE_DIR
+
+        for kind, name in (("talk", "prompt_talk"), ("enhance", "prompt_enhance")):
+            _PROMPTS[kind] = cv2.imdecode(np.fromfile(str(TEMPLATE_DIR / f"{name}.png"), np.uint8), cv2.IMREAD_GRAYSCALE)
+    x0, y0, x1, y1 = PROMPT_AREA
+    gray = cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+    best, best_score = None, PROMPT_THRESHOLD
+    for kind, t in _PROMPTS.items():
+        score = float(cv2.matchTemplate(gray, t, cv2.TM_CCOEFF_NORMED).max())
+        if score >= best_score:
+            best, best_score = kind, score
+    return best
 
 
 def find_talk_prompt(img: np.ndarray) -> tuple[float, float] | None:
-    """NPC 근처에 뜨는 "F 대화" 표시의 가운데. 없으면 None."""
-    global _TALK_TEMPLATE
-    if _TALK_TEMPLATE is None:
-        from .screen import TEMPLATE_DIR
-
-        path = TEMPLATE_DIR / "prompt_talk.png"
-        _TALK_TEMPLATE = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_GRAYSCALE)
-    gray = cv2.cvtColor(img[:960], cv2.COLOR_BGR2GRAY)  # 아래 HUD 제외
-    res = cv2.matchTemplate(gray, _TALK_TEMPLATE, cv2.TM_CCOEFF_NORMED)
-    _, score, _, loc = cv2.minMaxLoc(res)
-    if score < TALK_THRESHOLD:
-        return None
-    th, tw = _TALK_TEMPLATE.shape
-    return loc[0] + tw / 2, loc[1] + th / 2
+    """NPC 근처에 뜨는 "F 대화" 표시가 있으면 그 자리. 없으면 None."""
+    return (1261.0, 682.0) if find_prompt(img) == "talk" else None
 
 
 class TemplateTracker:
