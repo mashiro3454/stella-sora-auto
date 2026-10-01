@@ -961,7 +961,7 @@ class Bot:
             if self.det.detect(self.grab()).state != "field":
                 return  # 다른 화면이 떴다 (카드 선택 등). 그 화면을 먼저 처리하고 다음에 다시
             self.gi.key("esc")
-            time.sleep(1.0)
+            time.sleep(1.5)  # 지도가 지금 층 쪽으로 움직이는 동안 기다린다
             img = self.grab()
             st = self.det.detect(img).state
             if st != "esc_map":
@@ -969,7 +969,8 @@ class Bot:
                 if st == "field":
                     continue
                 return  # 다른 화면 (메뉴 등): 그 화면부터 처리하고 다음에 다시
-            text = self.ocr.text(img, (600, 60, 1300, 1020)).replace(" ", "")
+            # 지금 층 표시("2/20층 선택의 방")는 지도에서 지금 방 옆에 붙어서 아래쪽 끝에 있기도 하다
+            text = self.ocr.text(img, (560, 40, 1880, 1075)).replace(" ", "")
             m = TITLE_FLOOR_RE.search(text)
             if not m:
                 self.log("층", f"지도 글자에서 층을 못 찾음: {text[:60]!r} ({attempt + 1}/3)", img)
