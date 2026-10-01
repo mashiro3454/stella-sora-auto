@@ -68,6 +68,8 @@ class CardChooser:
         """(점수, 이유). 점수가 None이면 고르면 안 되는 카드."""
         if card.potential is None:
             return None, "모르는 카드"
+        if not card.level_known:
+            return None, "레벨을 못 읽음"
         goal = self.goals.get(card.potential.id)
         if card.potential.kind == "core":
             return (1000.0, "프리셋 코어") if goal else (None, "프리셋에 없는 코어")

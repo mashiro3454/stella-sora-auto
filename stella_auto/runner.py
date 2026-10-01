@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import os
 import re
 import sys
 import time
@@ -70,6 +71,7 @@ class Bot:
         self.title_seen = 0.0  # 방 제목을 마지막으로 본 때
         self.title_checked = 0.0
         self.npc_scanned = 0.0
+        self._card_tries = 0
         self.gamble_won = False
         self.restart_pending = ""
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -109,6 +111,13 @@ class Bot:
         if gold is not None:
             self.run.gold = gold
         cards = read_cards(img, self.ocr, self.pool)
+        # 카드가 다 안 읽혔거나 레벨을 못 읽은 카드가 있으면 다시 읽는다 (그대로 고르면 엉뚱하게 리롤한다)
+        unsure = len(cards) < 3 or any(not c.level_known for c in cards)
+        if (not cards or unsure) and self._card_tries < 3:
+            self._card_tries += 1
+            time.sleep(0.4)
+            return
+        self._card_tries = 0
         if not cards:
             self.log("카드", "카드를 못 읽음, 잠깐 기다림")
             time.sleep(0.5)
@@ -500,6 +509,16 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    # 봇은 한 번에 하나만. 두 개가 같이 돌면 서로 키를 눌러서 엉망이 된다
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    mutex = kernel32.CreateMutexW(None, True, "Local\stella_auto_runner")
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        print("봇이 이미 돌고 있음. 먼저 그걸 멈춰줘 (F12)", file=sys.stderr)
+        return 1
+    pid_file = ROOT / "logs" / "bot.pid"
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()))
     bot = Bot(Preset.load(args.preset))
     try:
         bot.play(args.floors)
@@ -507,6 +526,8 @@ def main(argv: list[str] | None = None) -> int:
         bot.log("멈춤", str(e))
     finally:
         bot.gi.release_all()
+        pid_file.unlink(missing_ok=True)
+        kernel32.CloseHandle(ctypes.c_void_p(mutex))
     return 0
 
 

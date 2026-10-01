@@ -38,6 +38,7 @@ class Card:
     raw_level: str
     recommend: str | None = None  # "6레벨 추천" (게임 프리셋 표시)
     counter: tuple[int, int] | None = None  # "0/6" (지금/목표)
+    level_known: bool = True  # 레벨 줄을 못 읽었으면 False (코어 카드는 레벨 줄이 없어서 항상 True)
 
     @property
     def is_new(self) -> bool:
@@ -117,8 +118,12 @@ def read_cards(img: np.ndarray, ocr: KoreanOcr, pool: dict[int, PotentialInfo]) 
                 if m and len(t) <= 6:
                     counter = (int(m.group(1)), int(m.group(2)))
         info = pool[pid]
-        if level is None:  # 코어(분홍) 카드는 레벨 줄이 없다
-            level = (None, 1, 0)
+        known = True
+        if level is None:
+            if info.kind == "core":  # 코어(분홍) 카드는 레벨 줄이 없다
+                level = (None, 1, 0)
+            else:  # 레벨을 못 읽음. Lv1로 치면 멀쩡한 카드를 버리게 된다
+                level, known = (None, 0, 0), False
         cards.append(Card(
             slot=slot,
             click=(int(cx), int(cy - 250)),
@@ -131,5 +136,6 @@ def read_cards(img: np.ndarray, ocr: KoreanOcr, pool: dict[int, PotentialInfo]) 
             raw_level=raw_level,
             recommend=recommend,
             counter=counter,
+            level_known=known,
         ))
     return cards

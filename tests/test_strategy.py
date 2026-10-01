@@ -126,3 +126,10 @@ def test_record_pick_counts(chooser):
     chooser.record_pick(card("관통 탄도", 4, 3), st)
     assert (st.lv3_new_taken, st.lv2_new_taken) == (1, 1)
     assert st.owned[BY_NAME["관통 탄도"].id] == 4
+
+
+def test_unknown_level_is_not_lv1(chooser):
+    c = card("관통 탄도", 0)
+    c.level_known = False
+    v, why = chooser.value(c, RunState(floor=5))
+    assert v is None and "못 읽음" in why
