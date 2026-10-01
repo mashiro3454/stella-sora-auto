@@ -46,6 +46,7 @@ HUD_TEXT = ("기록점수", "점수", "자동전투", "전투중", "레벨", "�
 NPC_SCAN_EVERY = 2.5  # 초. 이름표 찾기(OCR 전체 화면)는 무거워서 가끔만
 TALK_COOLDOWN = 8.0  # 대화가 끝나도 "F 대화"가 한동안 남아 있어서, 말 건 뒤 이만큼은 다시 안 건다
 GAMBLE_EXIT_WAIT = 8.0  # 3층: 출구가 보여도 전투 뒤 NPC가 나올 수 있어서 이만큼 더 둘러본다
+GAMBLE_FLOOR_MIN = 45.0  # 3층: 들어온 뒤 최소 이만큼은 있어야 전투가 끝나고 NPC가 나올 시간이 된다
 
 # 메뉴 버튼 (게임 화면 1920x1080 기준, 실험으로 확인)
 BTN_DEPART = (1706, 978)  # 난이도 선택 "출발" (바로 왼쪽 "빠른 전투"는 절대 누르지 않는다)
@@ -186,7 +187,7 @@ class Bot:
             time.sleep(0.4)
             return
         pairs = [(o.text, o.effect) for o in options]
-        idx, rule = choose_option(pairs, self.run.floor)
+        idx, rule = choose_option(pairs, self.run.floor, question)
         gold_before = self.read_gold(img)
         self.log("선택지", f"{question} -> [{idx}] '{options[idx].text}' ({rule})", img,
                  options=pairs, chosen=idx, rule=rule)
@@ -246,6 +247,13 @@ class Bot:
                 return True
             return False
         self.title_seen = now
+        if self.floor_known and floor != self.run.floor:
+            # 층은 한 번에 1씩만 오른다. OCR이 "3/20층"을 "13/20층"으로 읽는 일이 있었다
+            if floor < self.run.floor:
+                return False
+            if floor != self.run.floor + 1:
+                self.log("층", f"제목을 {floor}층으로 읽었지만 {self.run.floor + 1}층으로 셈")
+                floor = self.run.floor + 1
         if floor != self.run.floor or (room and not self.room):
             changed = floor != self.run.floor
             self.new_floor(floor, room or self.room)
@@ -379,7 +387,8 @@ class Bot:
             self.exit_seen_at = now
         if not self.gamble_won and self.run.floor >= GAMBLE_LAST_FLOOR:
             # 3층에서도 650원 NPC가 나올 수 있다. 출구가 보인 뒤에도 잠깐 NPC를 더 찾고 나서 판단한다
-            if self.run.floor == GAMBLE_LAST_FLOOR and now - self.exit_seen_at < GAMBLE_EXIT_WAIT:
+            if self.run.floor == GAMBLE_LAST_FLOOR and (now - self.exit_seen_at < GAMBLE_EXIT_WAIT
+                                                        or now - self.floor_changed_at < GAMBLE_FLOOR_MIN):
                 time.sleep(0.5)
                 return None
             self.restart_pending = f"{GAMBLE_LAST_FLOOR}층까지 650원 선택지를 못 받음"
@@ -566,8 +575,44 @@ def find_npc_event(img: np.ndarray, threshold: float = 0.65) -> tuple[float, flo
     return loc[0] + t.shape[1] / 2, loc[1] + t.shape[0] / 2
 
 
-def choose_option(options: list[tuple[str, str]], floor: int) -> tuple[int, str]:
+# 별의 탑 퀴즈 정답지 (sstoy src/modules/app-summary.ts STAR_TOWER_QA_DATA)
+QUIZ = {
+    "음...... 별의 탑이 가장 좋아하는 숫자는 뭘까?": "3? 항상 그렇게 선택했으니까......",
+    "몇시까지 버텨야 '밤샘' 이라고 생각해?": "12시?",
+    "자, 시험이야. 2의 10제곱은 얼마일까?": "1024?",
+    "자, 시험이야. 정육면체는 몇 개의 면이 있을까?": "6개?",
+    "한번 맞혀봐...... 난 어떤 여행자와의 대화를 더 좋아할까?": "큰 꿈을 가진 사람.",
+    "'큰 뜻을 품는다'는건 뭐라고 생각해?": "계획을 잘 세우고, 실행해야 해.",
+    "욕망에 충실하다는건...... 어떤 걸 말하는 것 같아?": "현재를 즐기자!",
+    "자, 시험이야. 한 옥타브엔 몇 개의 음이 있을까?": "12개?",
+    "한번 맞혀봐. 난 어떤 여행가를 더 좋아할까?": "욕망에 충실한 사람.",
+    "뭘 먹는 게 건강에 더 좋을까?": "야채를 많이 먹으라고?",
+    "이 중에서 어떤 게 건강에 좋을까?": "균형적인 음식?",
+    "이 중에서 어떤 걸 줄이는 게 건강에 좋을까?": "오래 앉아 있지 말라고?",
+}
+_QUIZ_KEYS = [q.replace(" ", "") for q in QUIZ]
+_QUIZ_ANSWERS = list(QUIZ.values())
+
+
+def quiz_answer(question: str, options: list[tuple[str, str]]) -> int | None:
+    """퀴즈 질문이면 정답 보기 번호. 질문이 정답지와 비슷하지 않으면 None."""
+    q = question.replace(" ", "")
+    if not q:
+        return None
+    m = process.extractOne(q, _QUIZ_KEYS, scorer=fuzz.ratio, score_cutoff=75)
+    if not m:
+        return None
+    answer = _QUIZ_ANSWERS[m[2]].replace(" ", "")
+    scores = [fuzz.ratio(t.replace(" ", ""), answer) for t, _ in options]
+    best = max(range(len(options)), key=lambda i: scores[i])
+    return best if scores[best] >= 60 else None
+
+
+def choose_option(options: list[tuple[str, str]], floor: int, question: str = "") -> tuple[int, str]:
     """NPC 선택지 고르기 (docs/tower-rules.md "NPC 선택지 고르기"). (번호, 규칙 이름)."""
+    q = quiz_answer(question, options)
+    if q is not None:
+        return q, "퀴즈 정답지"
     texts = [(t + " " + e).replace(" ", "") for t, e in options]
     for i, s in enumerate(texts):
         if "650" in s and floor <= GAMBLE_LAST_FLOOR:

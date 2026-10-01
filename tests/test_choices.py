@@ -37,3 +37,15 @@ def test_notes():
 
 def test_33_percent_potential():
     assert choose_option([("부탁해!", "33% 확률로 잠재력 획득"), ("됐어.", "30 획득")], 9)[0] == 0
+
+
+def test_quiz_answer_from_sstoy_sheet():
+    # 실제 OCR 결과 그대로 (질문 앞 말풍선 아이콘은 "@"로 읽힌다)
+    opts = [("12개?", ""), ("8개?", ""), ("7개?", "")]
+    assert choose_option(opts, 2, "자, 시험이야. 한 옥타브엔 몇 개의 음이 있을까?") == (0, "퀴즈 정답지")
+    opts = [("1000?", ""), ("1024?", "")]
+    assert choose_option(opts, 2, "자, 시험이야. 2의 10제곱은 얼마일까?")[0] == 1
+
+
+def test_not_quiz_falls_through():
+    assert choose_option(PORTIA, 3, "사실 너도 상품으로 팔릴 수 있어.") == (1, "HP 내고 잠재력/돈")
