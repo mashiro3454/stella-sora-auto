@@ -220,7 +220,11 @@ class CardChooser:
         """아직 0레벨인 필수 (이게 하나라도 있으면 기록은 버릴 조건)."""
         return [g for g in self.goals.values() if g.kind != "core" and g.mark == "필수" and state.owned.get(g.id, 0) == 0]
 
-    def choose(self, cards: list[Card], state: RunState, *, can_reroll: bool = True) -> Decision:
+    def choose(self, cards: list[Card], state: RunState, *, can_reroll: bool = True,
+               pool_char: int | None = None) -> Decision:
+        """pool_char: 얼굴 음료에서 나온 카드 화면이면 그 캐릭터 ID (-1 = 모르는 얼굴).
+        그 캐릭터 잠재만 나오는 화면이라, 다른 캐릭터의 필수를 찾는 리롤은 돈 낭비다 (01:22 19층: 레이스
+        음료 화면에서 엘레노어 필수를 찾아 리롤 3번)."""
         vals = {c.slot: self.value(c, state) for c in cards}
         ok = [c for c in cards if vals[c.slot][0] is not None and vals[c.slot][0] > 0]
         values = {s: v for s, (v, _) in vals.items()}
@@ -229,6 +233,8 @@ class CardChooser:
         # 새 잠재가 막힌 캐릭터의 필수는 리롤로 못 찾는다 (그 캐릭터 잠재를 6레벨로 올리는 카드에 점수를 더 준다)
         missing = ([g for g in self.missing_essentials(state) if not self.char_locked(self.char_of.get(g.id, -1), state)]
                    if fishing else [])
+        if pool_char is not None:
+            missing = [g for g in missing if pool_char != -1 and self.char_of.get(g.id) == pool_char]
         if missing and can_reroll:
             ids = {g.id for g in missing}
             hit = any(c.potential and c.potential.id in ids and c.level_to >= 2 for c in cards)

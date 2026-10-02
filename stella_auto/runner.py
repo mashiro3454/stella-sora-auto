@@ -124,6 +124,7 @@ class Bot:
         self._card_tries = 0
         self._last_cards: tuple | None = None  # 직전에 읽은 카드 (두 번 연속 같아야 고른다)
         self._card_prev: np.ndarray | None = None  # 카드 멈춤 판정용 직전 화면 조각
+        self.card_pool_char: int | None = None  # 방금 산 음료의 얼굴 캐릭터 (이어지는 카드 화면의 풀)
         self._card_wait_since = 0.0
         self._last_choice_bands: tuple | None = None
         self._declined: str | None = None  # ESC로 안 고르고 나간 선택지 질문
@@ -350,7 +351,8 @@ class Bot:
                 return
         self._last_cards = None
         self._card_prev = None  # 행동하고 나면 (카드가 바뀌니) 멈춤 판정을 처음부터
-        d = self.chooser.choose_enhance(cards, self.run) if enhance else self.chooser.choose(cards, self.run)
+        d = (self.chooser.choose_enhance(cards, self.run) if enhance
+             else self.chooser.choose(cards, self.run, pool_char=self.card_pool_char))
         if not self.run_tracked and (d.action == "restart" or (d.action == "reroll" and
                                                                (not self.floor_known or self.run.rerolls_this_pick >= 2))):
             # 중간에 켠 판: 가진 잠재(와 층)를 다 몰라서 재시작 판단을 믿을 수 없다.
@@ -375,6 +377,8 @@ class Bot:
             self.gi.key("space")
             if enhance and any(c.level_from is not None and c.gain >= 2 for c in cards):
                 self.run.plus2_taken += 1  # +2 강화 화면 (판에 5번뿐)
+            if not enhance:
+                self.card_pool_char = None  # 음료 카드 화면이 끝났다
             self.chooser.record_pick(d.card, self.run)
             if self.run_tracked:
                 self.save_state()
@@ -502,6 +506,7 @@ class Bot:
         self.exit_fails = 0
         self._last_cards = None
         self._card_prev = None
+        self.card_pool_char = None
         self.room = room
         self.talked = set()
         self.talk_spots: list = []  # 이 층에서 F로 말을 건 자리들
@@ -860,6 +865,7 @@ class Bot:
                 # 음료를 사면 카드 고르기가 나오고 거기서 리롤로 돈이 바뀐다. 돌아오면 돈을 다시 읽고 다시 계획한다
                 self.shop_plan = None
                 self.shop_queue = []
+                self.card_pool_char = item.face  # 얼굴 음료면 카드 화면에 그 캐릭터 잠재만 나온다
             return
         if self.shop_plan.reroll and not self.shop_rerolled:
             self.shop_rerolled = True

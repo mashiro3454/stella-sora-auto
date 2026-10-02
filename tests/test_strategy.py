@@ -416,3 +416,19 @@ def test_fish_takes_plenty3_lv2_when_rest_useless(chooser):
     st2 = RunState(floor=15, gold=1700, owned=dict(have), keep_after_gamble=True, lv2_new_taken=4)
     d = chooser.choose(cards(("칼날의 춤사위", 2), ("격노의 바람", 3), ("새벽을 여는 칼날", 1)), st2)
     assert d.action == "reroll" and "필수 찾기" in d.reason
+
+
+def test_no_fishing_on_faced_drink_screen(chooser):
+    # 01:22 19층: 레이스 얼굴 음료의 카드 화면에서 엘레노어 필수를 찾아 리롤했다 (돈 낭비).
+    # 얼굴 음료 화면(pool_char)에선 그 캐릭터의 필수를 찾는 게 아니면 필수 찾기를 끈다
+    have = all_but("관통 탄도", "섬멸의 잔향")  # 엘레노어 필수 2개가 0레벨
+    offer = cards(("칼날의 춤사위", 5, 4), ("무영 사냥꾼", 1), ("과열 사격", 3))
+    st = RunState(floor=19, gold=1500, owned=dict(have), keep_after_gamble=True)
+    d = chooser.choose(offer, st, pool_char=143)  # 레이스 음료
+    assert d.action == "pick" and d.card.potential.name == "칼날의 춤사위"
+    # 민무늬 음료(또는 일반 레벨업)에선 그대로 찾는다
+    d = chooser.choose(offer, st)
+    assert d.action == "reroll" and "필수 찾기" in d.reason
+    # 엘레노어 얼굴 음료면 엘레노어 필수를 그대로 찾는다
+    d = chooser.choose(offer, RunState(floor=19, gold=1500, owned=dict(have), keep_after_gamble=True), pool_char=137)
+    assert d.action == "reroll" and "필수 찾기" in d.reason
