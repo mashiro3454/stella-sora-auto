@@ -281,3 +281,22 @@ def test_quiz_polite_variant_matches_by_answer():
     # 정답지에 없는 퀴즈는 그대로 (답을 모르니 못 고름 -> 다른 규칙으로)
     unknown = [("A.", "정답을 선택하면, 랜덤 잠재력 1개를 획득합니다!"), ("B.", "정답을 선택하면, 랜덤 잠재력 1개를 획득합니다!")]
     assert choose_option(unknown, 10, "모르는 질문?")[1] != "퀴즈 정답지"
+
+
+def test_free_notes_by_marginal_gain():
+    # 사용자 2026-10-03: 소리 가치 = 5개를 받으면 협주 활성화/레벨업 진행이 실제로 몇 칸 차는가.
+    # 강공 +5는 꿈의 날개(18/25) 한 스킬에 5칸뿐, 행운 +5는 두 스킬(10/15, 10/15)에 10칸 -> 행운
+    from stella_auto.notes import NoteNeeds
+    needs = NoteNeeds(have={0: 18, 1: 10}, users={0: 3, 1: 2}, needs={0: [25, 15], 1: [15, 15]})
+    opts = [("난 이것들뿐이야.", "강공의 소리 5개 획득"), ("난 이것들뿐이야.", "행운의 소리 5개 획득"),
+            ("난 전부 잘 들어.", "랜덤 소리 5개 획득")]
+    idx, rule = choose_option(opts, 9, "음악도 치료가 될 수 있죠.", note_users=needs.users,
+                              note_have=needs.have, note_needs=needs)
+    assert idx == 1, rule
+    # 필요량을 다 넘긴 소리뿐이면 랜덤 (40개 규칙이 자동으로 들어간다)
+    full = NoteNeeds(have={0: 40, 1: 30}, users={0: 3, 1: 2}, needs={0: [25, 15], 1: [15, 15]})
+    idx, rule = choose_option(opts, 9, "", note_users=full.users, note_have=full.have, note_needs=full)
+    assert idx == 2, rule
+    # 가방을 아직 못 읽었으면 (needs 없음) 예전 규칙: 많이 쓰는 강공
+    idx, rule = choose_option(opts, 2, "", note_users={0: 3, 1: 2}, note_have={0: 10})
+    assert idx == 0, rule

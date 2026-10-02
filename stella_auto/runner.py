@@ -27,7 +27,7 @@ from .capture import capture, ensure_client_size, find_game_window, restore
 from .cards import CARD_AREA, read_cards, team_pool
 from .choices import find_option_boxes, read_choices
 from .shop import drink_face, plan_purchases, read_reroll, read_shop
-from .notes import NOTE_NAMES, read_needs, shop_note_type, type_from_name
+from .notes import NOTE_NAMES, NoteNeeds, read_needs, shop_note_type, type_from_name
 from .gamedata import default_gamedata
 from . import killswitch
 from .input import GameInput, NotFocusedError, release_all_keys
@@ -416,7 +416,8 @@ class Bot:
             return
         self._quiz_waits = 0
         idx, rule = choose_option(pairs, self.run.floor, question, note_users=self.note_users,
-                                  note_have=self.note_needs.have if self.note_needs else None)
+                                  note_have=self.note_needs.have if self.note_needs else None,
+                                  note_needs=self.note_needs)
         if idx < 0 and self._declined == question:
             # ESC로 안 닫히는 선택지: 가장 싼 쪽 (첫 번째 숫자가 가장 작은 것)
             costs = [int(m.group(1) or m.group(2)) if (m := re.search(r"(\d+)\s*소모", t + e)) else 10 ** 6 for t, e in pairs]
@@ -825,7 +826,8 @@ class Bot:
             self.shop_plan = plan_purchases(items, gold, shop_index=self.shop_index, last_shop=self.run.floor >= 20,
                                             reroll_left=left, reroll_price=price,
                                             note_have=self.note_needs.have if self.note_needs else None,
-                                            enhance_reserve=reserve, prefer_char=self.preset.enhance_first)
+                                            enhance_reserve=reserve, prefer_char=self.preset.enhance_first,
+                                            note_needs=self.note_needs)
             self.shop_queue = list(self.shop_plan.buy)
             bought = {i.slot for i in self.shop_plan.buy}
             self.shop_potions_left = bool(self.shop_plan.buy) and any(
@@ -1854,7 +1856,8 @@ def quiz_answer(question: str, options: list[tuple[str, str]]) -> int | None:
 
 def choose_option(options: list[tuple[str, str]], floor: int, question: str = "",
                   note_users: dict[int, int] | None = None,
-                  note_have: dict[int, int] | None = None) -> tuple[int, str]:
+                  note_have: dict[int, int] | None = None,
+                  note_needs: "NoteNeeds | None" = None) -> tuple[int, str]:
     """NPC 선택지 고르기 (docs/tower-rules.md "NPC 선택지 고르기"). (번호, 규칙 이름).
     note_users: 소리 종류 -> 그 소리를 쓰는 협주스킬 수, note_have: 가진 개수 (공짜 소리 고르기에 씀)."""
     q = quiz_answer(question, options)
@@ -1918,7 +1921,7 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
         i = min(buy, key=lambda k: cost(effects[k]))
         return i, "돈 내고 잠재력, 가장 싼 것 (13·18번)"
     loss = ("소모", "차감", "소실", "감소", "잃", "변화")  # "랜덤 변화", "HP 30% 소실"도 잃을 수 있는 것
-    pick = free_note_choice(texts, note_users, loss, note_have)
+    pick = free_note_choice(texts, note_users, loss, note_have, note_needs)
     if pick is not None:
         return pick
     for i, s in enumerate(texts):
@@ -1951,11 +1954,14 @@ def lobby_action(t: str) -> str | None:
 
 
 def free_note_choice(texts: list[str], note_users: dict[int, int] | None,
-                     loss: tuple[str, ...], note_have: dict[int, int] | None = None) -> tuple[int, str] | None:
-    """보기가 전부 공짜 소리 ("강공의 소리 5개 획득 / 행운의 소리 5개 획득 / 랜덤 소리 5개 획득"):
-    우리 협주스킬이 쓰는 소리 (많이 쓰는 것, 같으면 덜 가진 것), 쓰는 소리가 없으면 랜덤 (사용자 규칙 2026-10-02).
-    협주 1개만 쓰는 소리는 이미 40개 이상 있으면 랜덤이 낫다 (사용자 규칙).
-    전엔 첫 번째를 골라서 안 쓰는 폭발의 소리를 받았다."""
+                     loss: tuple[str, ...], note_have: dict[int, int] | None = None,
+                     note_needs: "NoteNeeds | None" = None) -> tuple[int, str] | None:
+    """보기가 전부 공짜 소리 ("강공의 소리 5개 획득 / 행운의 소리 5개 획득 / 랜덤 소리 5개 획득").
+
+    가방에서 협주스킬별 필요량을 읽어 뒀으면(note_needs): 5개를 받았을 때 활성화/레벨업 진행이
+    실제로 몇 칸 차는지(gain)가 큰 소리 (사용자 2026-10-03: 강공 +5는 꿈의 날개 한 칸뿐이지만
+    행운 +5는 협주 둘을 5칸씩 채운다). 전부 0칸이면 랜덤 (필요량 넘긴 소리만 남은 것).
+    아직 못 읽었으면 예전 규칙: 많이 쓰는 것 > 덜 가진 것, 1개만 쓰는데 40개 이상이면 랜덤."""
     have = note_have or {}
     if not note_users or len(texts) < 2:
         return None
@@ -1964,6 +1970,15 @@ def free_note_choice(texts: list[str], note_users: dict[int, int] | None,
         if "소리" not in s or "획득" not in s or any(w in s for w in loss):
             return None
         kinds.append((i, type_from_name(s), "랜덤" in s))
+    if note_needs is not None and note_needs.needs:
+        ranked = [(note_needs.gain(t), note_users.get(t, 0), -have.get(t, 0), -i, i, t)
+                  for i, t, rnd in kinds if t is not None and not rnd]
+        if ranked and max(ranked)[0] > 0:
+            g, n, _, _, i, t = max(ranked)
+            return i, f"공짜 소리: {NOTE_NAMES[t]} +5개면 협주 진행 {g}칸 (협주 {n}개가 씀)"
+        rnd = [i for i, _, r in kinds if r]
+        if rnd:
+            return rnd[0], "공짜 소리: 필요량 찬 소리뿐이라 랜덤"
     named = [(note_users.get(t, 0), -have.get(t, 0), -i, i) for i, t, rnd in kinds
              if t is not None and not rnd and not (note_users.get(t, 0) == 1 and have.get(t, 0) >= 40)]
     if named and max(named)[0] > 0:

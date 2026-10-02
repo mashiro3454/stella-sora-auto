@@ -66,9 +66,16 @@ def type_from_name(name: str) -> int | None:
 class NoteNeeds:
     have: dict[int, int] = field(default_factory=dict)  # 종류 -> 가진 개수
     users: dict[int, int] = field(default_factory=dict)  # 종류 -> 이 소리가 필요한 협주스킬 수
+    needs: dict[int, list[int]] = field(default_factory=dict)  # 종류 -> 협주스킬별 다음 레벨 필요 개수들
 
     def summary(self) -> str:
         return ", ".join(f"{NOTE_NAMES[t]} {self.have.get(t, '?')}개/협주 {n}개" for t, n in sorted(self.users.items()))
+
+    def gain(self, t: int, k: int = 5) -> int:
+        """이 소리 k개를 더 받으면 협주스킬 활성화/레벨업 진행이 실제로 몇 칸 차는가 (사용자 2026-10-03).
+        스킬마다 min(k, 남은 필요량)을 더한다. 이미 필요량을 넘긴 스킬은 0 (40개 규칙이 자동으로 들어간다)."""
+        h = self.have.get(t, 0)
+        return sum(min(k, max(0, need - h)) for need in self.needs.get(t, []))
 
 
 # 협주스킬 6칸 (왼쪽/오른쪽 열 x 범위, 소리 줄 y). 활성화 전 칸은 흐리게 보여서 채도 기준을 낮게 잡는다
@@ -100,6 +107,7 @@ def read_needs(img: np.ndarray, ocr: KoreanOcr) -> NoteNeeds:
                 frac = _FRACTION.search(ocr.text(img, (x0 + x + w, y0, x0 + x + w + 85, y1)))
                 if frac:
                     out.have[t] = int(frac.group(1))
+                    out.needs.setdefault(t, []).append(int(frac.group(2)))
     return out
 
 

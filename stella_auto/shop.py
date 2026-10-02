@@ -192,7 +192,7 @@ class ShopPlan:
 def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_shop: bool,
                    reroll_left: int, reroll_price: int | None, reserve: int = 80,
                    note_have: dict[int, int] | None = None, enhance_reserve: int = 0,
-                   prefer_char: int | None = None) -> ShopPlan:
+                   prefer_char: int | None = None, note_needs=None) -> ShopPlan:
     """살 것 고르기.
 
     - 할인하는 잠재력 음료는 전부 산다. prefer_char(강화 우선 캐릭터)가 있으면 그 캐릭터 잠재가
@@ -230,6 +230,9 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
     for it in sorted([i for i in avail if i.kind == "potential" and i.discounted], key=lambda i: (face_rank(i), i.price)):
         take(it)
     notes = [i for i in avail if i.kind == "notes"]
+    if note_needs is not None and getattr(note_needs, "needs", None):
+        # 협주 진행에 실제로 차는 칸(gain)이 큰 소리부터 (사용자 2026-10-03)
+        notes.sort(key=lambda i: -note_needs.gain(i.note_type, i.note_count or 5) if i.note_type is not None else 0)
     for it in [i for i in notes if i.note_count == 5 and i.price == PRICES["notes5"][2] and (i.users is None or i.users >= 1)]:
         take(it)  # 5개 45원
     for it in [i for i in notes if i.note_count == 5 and i.price == PRICES["notes5"][1]
@@ -241,6 +244,8 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
         others = [v for t, v in (note_have or {}).items() if t != it.note_type]
         if it.have is not None and it.have >= 40 and any(v < 20 for v in others):
             continue  # 이 소리만 많고 다른 필요한 소리가 모자라면 정가로는 안 산다
+        if note_needs is not None and getattr(note_needs, "needs", None) and it.note_type is not None                 and note_needs.gain(it.note_type, it.note_count or 5) == 0:
+            continue  # 협주 진행에 한 칸도 안 차는 소리는 정가로 안 산다
         take(it)  # 5개 90원
     reroll = (shop_index in (2, 4) and reroll_left > 0 and reroll_price is not None
               and money - reroll_price >= keep)
