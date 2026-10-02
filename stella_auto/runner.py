@@ -145,6 +145,8 @@ class Bot:
         self.shop_queue: list = []
         self.shop_rerolled = False
         self.shop_bought: set[tuple[bool, int]] = set()  # (리롤 뒤인지, 칸) 이 상점에서 산 것
+        self.shop_potions_left = False  # 마지막으로 본 상점에 안 산 잠재력 음료가 남아 있었는지
+        self.shop_reopens = 0  # 강화 우선 캐릭터 잠재를 얻으려고 상점에 다시 간 횟수
         self.shop_click_fails: dict[tuple[bool, int], int] = {}  # 눌렀는데 구매 창이 안 뜬 횟수
         self.shop_peeked = False
         self.note_needs = None  # 가방에서 읽은 협주스킬별 필요한 소리
@@ -153,6 +155,8 @@ class Bot:
         self.gamble_won = False
         self.require_gamble = True
         self.step_mode = False  # 650원 이긴 뒤 층마다 멈추고 STEP_GO를 기다린다 (사용자가 한 층씩 보며 고칠 곳을 짚는다)
+        self.step_pause_sec = 0.0  # 0이 아니면: 650원 이긴 판에서 출구로 들어가기 전에 이만큼만 멈춘다
+        self.exit_paused = False  # 이 층에서 출구 앞 잠깐 멈춤을 했는지
         self.pause_pending = ""
         self.stop_after_tower = False
         self.max_runs = 0  # 이만큼 기록을 저장하면 멈춤 (0이면 계속)
@@ -453,6 +457,7 @@ class Bot:
         self.combat_done = room not in COMBAT_ROOMS
         self.combat_done_at = None
         self.exit_npc_checked = False
+        self.exit_paused = False
         self.joined_midway = False
         self.enhance_count = 0
         self.shop_done = not self.has_shop(floor, room)
@@ -462,6 +467,8 @@ class Bot:
         self.shop_rerolled = False
         self.shop_bought = set()
         self.shop_click_fails = {}
+        self.shop_potions_left = False
+        self.shop_reopens = 0
         self.shop_peeked = False
         self.trade_tick = 0
         self.floor_changed_at = time.monotonic()
@@ -632,6 +639,8 @@ class Bot:
             # 가진 잠재가 전부 6레벨이면 강화머신을 눌러도 카드가 안 나온다 (07:18 19층에서 두 번 헛걸음).
             # 후순위/다다익선(목표 3)/명함만뿐이어도 강화할 필요가 없다: 상점 음료부터 사서 올릴 잠재를 찾는다 (사용자 규칙)
             return False
+        if self.defer_enhance_for_priority():
+            return False  # 강화 우선 캐릭터 잠재가 없다: 상점 음료부터
         gold = self.read_gold(img)
         if gold is not None and gold < price:
             # 모자라 보이면 몇 번 더 읽는다 (08:01 20층: 1821원인데 강화를 건너뛰고 상점에서 돈을 다 썼다).
@@ -654,6 +663,28 @@ class Bot:
         goals = self.chooser.goals
         return [pid for pid in self.upgradable() if pid in goals and goals[pid].kind != "core"
                 and (goals[pid].mark == "필수" or (goals[pid].mark == "다다익선" and goals[pid].target_level >= 6))]
+
+    # -- 강화 우선 캐릭터 (프리셋 enhance_first, 사용자 2026-10-02 22시) --------------------
+    # 이 캐릭터의 강화할 잠재가 없으면: 강화머신보다 상점 음료(할인부터)를 먼저 사서 얻는다.
+    # 강화하다 떨어지면 상점에 다시 간다. 음료를 사도 못 얻으면 (돈/재고가 다하면) 그냥 다른 캐릭터를 강화한다.
+    def priority_upgradable(self) -> list[int]:
+        pc = self.preset.enhance_first
+        if not pc:
+            return []
+        return [pid for pid in self.worth_enhancing() if self.chooser.char_of.get(pid) == pc]
+
+    def shop_can_feed(self) -> bool:
+        """상점 음료로 잠재를 더 얻어볼 수 있는지 (아직 안 갔거나, 남은 음료 + 돈이 있는지)."""
+        if not self.shop_done:
+            return True
+        return self.shop_potions_left and self.shop_reopens < 2 and self.run.gold >= 700
+
+    def defer_enhance_for_priority(self) -> bool:
+        """강화를 미루고 상점부터 가야 하는지."""
+        pc = self.preset.enhance_first
+        if not pc or not self.run_tracked or self.priority_upgradable():
+            return False
+        return self.shop_can_feed()
 
     def enhance_reserve(self) -> int:
         """상점을 먼저 들를 때 강화머신에 쓸 돈 (아직 안 누른 값들, 180원까지)."""
@@ -750,6 +781,9 @@ class Bot:
                                             note_have=self.note_needs.have if self.note_needs else None,
                                             enhance_reserve=reserve)
             self.shop_queue = list(self.shop_plan.buy)
+            bought = {i.slot for i in self.shop_plan.buy}
+            self.shop_potions_left = bool(self.shop_plan.buy) and any(
+                i.kind == "potential" and not i.sold_out and i.slot not in bought for i in items)
             desc = ", ".join(f"{i.slot}:{i.name}({i.price}{'/' + str(i.old_price) if i.discounted else ''}"
                              f"{' 품절' if i.sold_out else ''}"
                              f"{' ' + NOTE_NAMES[i.note_type] + ' 협주' + str(i.users) if i.note_type is not None and i.users is not None else ''})"
@@ -952,6 +986,18 @@ class Bot:
                     self.npc_marker_rest_until = time.monotonic() + 15
                 return None
 
+        # 2-1-0) 강화 우선 캐릭터: 강화머신을 더 쓸 수 있는데 그 캐릭터 잠재가 없으면 상점에 다시 간다
+        if (self.preset.enhance_first and self.run_tracked and self.has_shop() and self.combat_done
+                and self.shop_done and self.next_enhance_price() <= ENHANCE_MAX_PRICE
+                and not self.priority_upgradable() and self.shop_can_feed()):
+            self.shop_reopens += 1
+            self.shop_done = False
+            self.shop_plan, self.shop_queue = None, []
+            names = {c.char_id: c.name for c in self.preset.characters}
+            self.log("상점", f"{names.get(self.preset.enhance_first, '우선 캐릭터')} 잠재가 없어서 상점을 다시 간다"
+                           f" ({self.shop_reopens}번째, 돈 {self.run.gold})")
+            return None
+
         # 2-1-1) 거래의 방은 강화머신과 상점이 끝나야 나간다
         # 20층은 보스를 잡은 뒤 마지막 상점이 있다 (돈을 다 쓴다)
         if self.has_shop() and (self.want_enhance(img) or not self.shop_done) and self.combat_done:
@@ -1038,6 +1084,13 @@ class Bot:
                 return None
             self.restart_pending = f"{GAMBLE_LAST_FLOOR}층까지 650원 선택지를 못 받음"
             return "restart"
+        if self.step_pause_sec and self.gamble_won and not self.exit_paused:
+            # 사용자가 지켜보며 고칠 곳을 짚는 가벼운 모드: 층을 떠나기 전에 잠깐만 멈춘다
+            self.exit_paused = True
+            self.gi.release_all()
+            self.log("멈춤", f"출구 앞 잠깐 멈춤 ({self.step_pause_sec:.0f}초)", img)
+            time.sleep(self.step_pause_sec)
+            return None
         self.log("이동", f"출구로 감: {goal.kind} ({goal.pos[0]:.0f}, {goal.pos[1]:.0f}), 지금 ({pos[0]:.0f}, {pos[1]:.0f})", img)
         res = self.nav.walk(self.nav.exit_goal, self.walk_stop, max_sec=45, why="출구")
         self.log("이동", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
@@ -1787,6 +1840,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-gamble", action="store_true", help="시험용: 650원 도박 조건 없이 계속 올라간다")
     ap.add_argument("--step", action="store_true",
                     help="한 층씩: 650원을 이기면 멈추고, 그 뒤 층마다 멈춘다. logs/step.go 파일을 만들면 다음 층까지")
+    ap.add_argument("--step-pause", type=float, default=0.0,
+                    help="650원 이긴 판에서 층을 떠나기 전에 이만큼(초)만 멈춘다 (지켜보기용 가벼운 모드)")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -1803,6 +1858,7 @@ def main(argv: list[str] | None = None) -> int:
     bot = Bot(Preset.load(args.preset))
     bot.require_gamble = not args.no_gamble
     bot.step_mode = args.step
+    bot.step_pause_sec = args.step_pause
     bot.max_runs = args.runs
     bot.deadline = time.monotonic() + args.hours * 3600 if args.hours else None
 

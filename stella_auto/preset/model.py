@@ -41,6 +41,19 @@ class Preset:
     warnings: list[str] = field(default_factory=list)
     # 같은 점수일 때 강화할 캐릭터 순서 (char_id, 앞일수록 먼저). sstoy 링크에는 없어서 사용자가 적는다
     priority: list[int] = field(default_factory=list)
+    # 강화 우선 캐릭터 (char_id). 보통은 메인 캐릭터 잠재가 제일 잘 나와서 필요 없지만, 지원 캐릭터
+    # 잠재를 메인보다 우선해야 하는 프리셋이 있다 (사용자 2026-10-02 22시, 바람 프리셋의 엘레노어).
+    # 켜져 있으면 거래의 방에서: 이 캐릭터의 강화할 잠재가 없으면 상점 음료부터 사서 얻고 나서 강화머신에 간다
+    enhance_first: int | None = None
+
+    def set_enhance_first(self, name: str | None) -> None:
+        if name is None:
+            self.enhance_first = None
+            return
+        by_key = {c.name: c.char_id for c in self.characters} | {str(c.char_id): c.char_id for c in self.characters}
+        if name not in by_key:
+            raise ValueError(f"팀에 없는 캐릭터: {name} (팀: {', '.join(c.name for c in self.characters)})")
+        self.enhance_first = by_key[name]
 
     def set_priority(self, names: list[str]) -> None:
         """'엘레노어,안즈,레이스'처럼 이름(또는 ID)으로 순서를 정한다."""
@@ -67,7 +80,8 @@ class Preset:
             CharacterGoal(**{**c, "potentials": [PotentialGoal(**p) for p in c["potentials"]]})
             for c in raw["characters"]
         ]
-        return cls(raw["title"], chars, raw["share_code"], raw.get("warnings", []), raw.get("priority", []))
+        return cls(raw["title"], chars, raw["share_code"], raw.get("warnings", []), raw.get("priority", []),
+                   raw.get("enhance_first"))
 
 
 def build_preset(raw: RawBuild, share_code: str, gd: GameData) -> Preset:

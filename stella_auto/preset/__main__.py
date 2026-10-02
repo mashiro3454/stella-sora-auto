@@ -35,10 +35,13 @@ def render(preset: Preset) -> str:
                 f"  {p.order + 1:>2}. {_pad(p.name, 22)} {KIND_LABELS[p.kind]}  {p.card_color:<6}  "
                 f"Lv {level:<5} {p.mark or ''}"
             )
+    names = {c.char_id: c.name for c in preset.characters}
     if preset.priority:
-        names = {c.char_id: c.name for c in preset.characters}
         lines.append("")
         lines.append("동점일 때 강화 순서: " + " > ".join(names.get(cid, str(cid)) for cid in preset.priority))
+    if preset.enhance_first:
+        lines.append(f"강화 우선 캐릭터: {names.get(preset.enhance_first, preset.enhance_first)}"
+                     " (거래의 방에서 이 캐릭터 잠재가 없으면 음료부터 산다)")
     if preset.warnings:
         lines.append("")
         lines.extend(f"경고: {w}" for w in preset.warnings)
@@ -51,6 +54,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("link", help="sstoy 공유 링크 또는 v3d-... 코드")
     ap.add_argument("-o", "--output", type=Path, help="프리셋 JSON 저장 경로")
     ap.add_argument("--priority", help="동점일 때 강화할 캐릭터 순서. 예: 엘레노어,안즈,레이스")
+    ap.add_argument("--enhance-first", metavar="이름",
+                    help="강화 우선 캐릭터. 거래의 방에서 이 캐릭터의 강화할 잠재가 없으면 상점 음료부터 사서"
+                         " 얻은 뒤에 강화머신에 간다 (지원 캐릭터 잠재를 메인보다 우선하는 프리셋용)")
     args = ap.parse_args(argv)
 
     if hasattr(sys.stdout, "reconfigure"):
@@ -65,6 +71,12 @@ def main(argv: list[str] | None = None) -> int:
             preset.set_priority([n.strip() for n in args.priority.split(",") if n.strip()])
         except ValueError as e:
             print(f"--priority 오류: {e}", file=sys.stderr)
+            return 1
+    if args.enhance_first:
+        try:
+            preset.set_enhance_first(args.enhance_first.strip())
+        except ValueError as e:
+            print(f"--enhance-first 오류: {e}", file=sys.stderr)
             return 1
 
     print(render(preset))

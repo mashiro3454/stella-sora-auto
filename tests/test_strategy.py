@@ -288,3 +288,41 @@ def test_fish_takes_upgrade_of_same_character(chooser):
     # 다른 캐릭터 레벨업만 뜨면 계속 찾는다
     d = chooser.choose(cards(("바람 장벽", 2), ("가속 돌파", 1), ("숲속 공주의 은총", 5, 4)), st)
     assert d.action == "reroll" and "필수 찾기" in d.reason
+
+
+def test_preset_enhance_first_roundtrip(tmp_path):
+    # 강화 우선 캐릭터 (사용자 2026-10-02 22시): 지원 캐릭터 잠재를 메인보다 우선하는 프리셋용 옵션
+    p = Preset.load(Path(__file__).parent.parent / "presets" / "바람.json")
+    assert p.enhance_first == 137  # 엘레노어
+    p.set_enhance_first("레이스")
+    assert p.enhance_first == 143
+    p.set_enhance_first(None)
+    assert p.enhance_first is None
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        p.set_enhance_first("없는애")
+    p.set_enhance_first("엘레노어")
+    f = tmp_path / "p.json"
+    p.save(f)
+    assert Preset.load(f).enhance_first == 137
+
+
+def test_enhance_first_defers_to_shop():
+    from stella_auto.runner import Bot
+    b = Bot(Preset.load(Path(__file__).parent.parent / "presets" / "바람.json"))
+    b.run_tracked = True
+    b.run.owned = {BY_NAME["혼란스러운 흐름"].id: 3, BY_NAME["드높은 기개"].id: 2}
+    b.shop_done = False
+    assert b.defer_enhance_for_priority()  # 엘레노어 잠재가 없다: 상점 음료 먼저
+    b.run.owned[BY_NAME["관통 탄도"].id] = 2
+    assert not b.defer_enhance_for_priority()  # 생기면 강화 먼저
+    b.run.owned[BY_NAME["관통 탄도"].id] = 6  # 다시 다 떨어짐
+    b.shop_done, b.shop_potions_left, b.shop_reopens, b.run.gold = True, True, 0, 1000
+    assert b.defer_enhance_for_priority()  # 음료가 남았고 돈이 있다: 상점 다시
+    b.run.gold = 300
+    assert not b.defer_enhance_for_priority()  # 돈이 없으면 그냥 다른 캐릭터 강화
+    b.run.gold, b.shop_reopens = 1000, 2
+    assert not b.defer_enhance_for_priority()  # 두 번 다시 갔으면 그만
+    b.preset.enhance_first = None
+    b.shop_reopens = 0
+    assert not b.defer_enhance_for_priority()  # 옵션이 꺼진 프리셋은 예전 그대로
