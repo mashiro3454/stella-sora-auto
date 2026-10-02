@@ -90,8 +90,11 @@ class CardChooser:
 
     # -- 점수 -------------------------------------------------------------
     def _unacquired_main(self, state: RunState) -> int:
+        """아직 0레벨인 필수/다다익선(목표 6): 새 Lv3 기회(10번)의 원래 주인들 (사용자 2026-10-02 23시).
+        이들이 Lv2로라도 잡히면 기회가 남고, 남는 기회는 다다익선(목표 3) 새 Lv3에 써도 된다."""
         return sum(1 for g in self.goals.values()
-                   if g.kind != "core" and g.mark in ("필수", "다다익선") and state.owned.get(g.id, 0) == 0)
+                   if g.kind != "core" and state.owned.get(g.id, 0) == 0
+                   and (g.mark == "필수" or (g.mark == "다다익선" and g.target_level >= self.w.plenty_high_min_target)))
 
     def value(self, card: Card, state: RunState, *, ignore_floor: bool = False) -> tuple[float | None, str]:
         """(점수, 이유). 점수가 None이면 고르면 안 되는 카드."""
@@ -118,8 +121,10 @@ class CardChooser:
             if (card.level_to == 2 and main and not safeguard and state.lv2_new_taken >= self.lv2_budget
                     and state.floor < LAST_FLOOR):
                 return None, f"Lv2 예산({self.lv2_budget}) 다 씀"
-            if card.level_to >= 3 and not main and LV3_LIMIT - state.lv3_new_taken <= self._unacquired_main(state):
-                return None, "Lv3 횟수는 필수/다다익선용으로 남겨 둠"
+            plenty_low = goal.mark == "다다익선" and goal.target_level < self.w.plenty_high_min_target
+            if (card.level_to >= 3 and (not main or plenty_low)
+                    and LV3_LIMIT - state.lv3_new_taken <= self._unacquired_main(state)):
+                return None, "Lv3 횟수는 필수/다다익선(6)용으로 남겨 둠"
 
         if goal.mark == "명함만":
             v = CARD_ONLY_VALUE if cur == 0 else 0.0
@@ -180,11 +185,27 @@ class CardChooser:
         return (below, -prio, cur, -rarity)
 
     def _upgrade_worth(self, card: Card, state: RunState, vals: dict) -> bool:
-        """필수/다다익선 레벨업 (목표 넘은 다다익선(3)은 빼고): 필수 찾기 리롤을 멈추고 집을 카드."""
-        if card.is_new or (vals[card.slot][0] or 0) <= 0:
+        """필수 찾기 리롤을 멈추고 집을 카드: 점수가 붙은 필수/다다익선 (목표 넘은 다다익선(3) 레벨업은 빼고).
+        새 카드도 점수가 붙었으면 (다다익선(3) 새 Lv3는 남는 기회가 있을 때만 점수가 붙는다) 집는다."""
+        if (vals[card.slot][0] or 0) <= 0:
             return False
+        if card.is_new and card.level_to < 3:
+            return False  # 새 Lv2 때문에 찾기를 멈추진 않는다 (찾던 필수의 Lv2는 hit이 따로 잡는다)
         goal = self.goals.get(card.potential.id) if card.potential else None
         return bool(goal and goal.mark in ("필수", "다다익선") and not self._weak(card, state))
+
+    def _mains_high(self, state: RunState) -> bool:
+        """필수가 다 잡혀 5레벨 이상이고 다다익선(6)도 다 4레벨 이상인지 (사용자 2026-10-02 23시):
+        이쯤이면 다다익선(3)을 목표 넘게 올리는 것도 괜찮다 — 약한 카드 취급(리롤 한 번)을 그만둔다."""
+        for g in self.goals.values():
+            if g.kind == "core":
+                continue
+            lv = state.owned.get(g.id, 0)
+            if g.mark == "필수" and lv < 5:
+                return False
+            if g.mark == "다다익선" and g.target_level >= self.w.plenty_high_min_target and lv < 4:
+                return False
+        return True
 
     def _weak(self, card: Card, state: RunState) -> bool:
         """목표를 넘은 다다익선(목표 3) 레벨업: 집긴 하지만 리롤을 한 번 해 볼 만한 카드."""
@@ -226,7 +247,7 @@ class CardChooser:
         if ok:
             best = max(ok, key=lambda c: (vals[c.slot][0], self._tiebreak(c)))
             if (can_reroll and all(self._weak(c, state) for c in ok) and state.rerolls_this_pick == 0
-                    and state.gold >= REROLL_COST + WEAK_REROLL_RESERVE):
+                    and state.gold >= REROLL_COST + WEAK_REROLL_RESERVE and not self._mains_high(state)):
                 return Decision("reroll", None, "목표 넘은 다다익선(3)만 떠서 한 번 리롤", values)
             return Decision("pick", best, f"{best.potential.name}: {vals[best.slot][1]} +{vals[best.slot][0]:.0f}", values)
         if state.keep_after_gamble or last:

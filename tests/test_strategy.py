@@ -347,3 +347,16 @@ def test_fish_stops_for_essential_or_plenty6_upgrade(chooser):
     st2 = RunState(floor=15, gold=1500, owned=have2, keep_after_gamble=True)
     d = chooser.choose(cards(("폭풍의 흡수", 3), ("섬광 발도", 3, 2)), st2)
     assert d.action == "pick" and d.card.potential.name == "섬광 발도"
+
+
+def test_weak_upgrade_ok_when_mains_high(chooser):
+    # 사용자 23시: 필수가 다 5렙 이상 + 다다익선(6)이 다 4렙 이상이면 다다익선(3)을 목표 넘게 올려도 된다
+    high = {g.id: 6 for g in chooser.goals.values() if g.kind != "core" and g.mark in ("필수", "다다익선")}
+    high[BY_NAME["칼날의 춤사위"].id] = 3
+    offer = cards(("바람의 섬광", 1), ("칼날의 춤사위", 4, 3))
+    d = chooser.choose(offer, RunState(floor=20, gold=1000, owned=dict(high)))
+    assert d.action == "pick" and d.card.potential.name == "칼날의 춤사위"
+    # 필수가 아직 4렙이면 전처럼 한 번 리롤해 본다
+    low = dict(high); low[BY_NAME["드높은 기개"].id] = 4
+    d = chooser.choose(offer, RunState(floor=20, gold=1000, owned=low))
+    assert d.action == "reroll" and "한 번" in d.reason

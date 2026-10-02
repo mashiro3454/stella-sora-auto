@@ -273,6 +273,8 @@ class Bot:
         self.enhance_count += 1
         self.last_talk_at = time.monotonic()
         self.log("강화", f"강화머신 {self.enhance_count}번째 ({price}원)", img)
+        if self.run_tracked:
+            self.save_state()
         self.nav.remember_spot("enhance")
         self.gi.key("f")
         time.sleep(1.2)
@@ -830,6 +832,8 @@ class Bot:
             return
         self.log("상점", "상점 끝, 나감")
         self.shop_done = True
+        if self.run_tracked:
+            self.save_state()
         self.gi.key("esc")
         time.sleep(0.8)
 
@@ -1571,7 +1575,11 @@ class Bot:
         r = self.run
         data = {"saved_at": time.time(), "floor": r.floor, "gold": r.gold, "owned": {str(k): v for k, v in r.owned.items()},
                 "lv3_new_taken": r.lv3_new_taken, "lv2_new_taken": r.lv2_new_taken, "rerolls_early": r.rerolls_early,
-                "gamble_won": self.gamble_won, "run_tracked": self.run_tracked, "combat_done": self.combat_done}
+                "gamble_won": self.gamble_won, "run_tracked": self.run_tracked, "combat_done": self.combat_done,
+                # 같은 층에서 봇을 껐다 켜도 강화머신 횟수/상점 진행을 이어받는다 (23:04 19층: 횟수가 0으로
+                # 리셋돼 180원까지 규칙인데 실제론 240원짜리를 눌렀다)
+                "enhance_count": self.enhance_count, "shop_done": self.shop_done,
+                "shop_rerolled": self.shop_rerolled, "shop_reopens": self.shop_reopens}
         try:
             tmp = self.state_path().with_suffix(".tmp")
             tmp.write_text(json.dumps(data), encoding="utf-8")
@@ -1596,6 +1604,11 @@ class Bot:
         self.run_tracked = True
         if floor == d["floor"] and d.get("combat_done"):
             self.combat_done = True  # 같은 방에서 전투가 이미 끝났다 (40초 기다리지 않게)
+        if floor == d["floor"]:
+            self.enhance_count = d.get("enhance_count", self.enhance_count)
+            self.shop_done = d.get("shop_done", self.shop_done)
+            self.shop_rerolled = d.get("shop_rerolled", self.shop_rerolled)
+            self.shop_reopens = d.get("shop_reopens", self.shop_reopens)
         self.log("시작", f"저장해 둔 판 상태를 이어받음 ({d['floor']}층, 잠재 {len(self.run.owned)}개, "
                        f"650원 {'성공' if self.gamble_won else '아직'})")
         return True
