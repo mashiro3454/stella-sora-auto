@@ -28,7 +28,7 @@ import numpy as np
 from . import navigate as nv
 from .navmap import CELL, NavMap, to_cell
 from .odometry import Odometry
-from .roommemory import Room, RoomMemory
+from .roommemory import Room, RoomMemory, exit_tolerance
 
 SCREEN_CENTER = (960.0, 540.0)
 CHAR_FALLBACK = (960.0, 555.0)  # 체력바를 못 찾으면 캐릭터는 대개 화면 가운데 (카메라가 따라감)
@@ -306,7 +306,7 @@ class Navigator:
         """이 지도에서 두 번 넘게 나가 본 출구가 있는데, 새로 본 문양이 거기서 멀면 무늬일 가능성이 크다."""
         if self.memory_exit is None or self.room is None or self.room.exit_count < 2:
             return False
-        return math.hypot(w[0] - self.memory_exit[0], w[1] - self.memory_exit[1]) > 300
+        return math.hypot(w[0] - self.memory_exit[0], w[1] - self.memory_exit[1]) > exit_tolerance(self.memory_exit)
 
     def _is_false_door(self, w: tuple[float, float]) -> bool:
         return any(math.hypot(w[0] - f[0], w[1] - f[1]) < 200 for f in self.false_doors)

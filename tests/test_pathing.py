@@ -275,9 +275,14 @@ def test_scattered_exit_memory_not_used(tmp_path):
     mem = RoomMemory(tmp_path)
     img = np.random.default_rng(3).integers(0, 255, (1080, 1920, 3), dtype=np.uint8)
     r = mem.add("강적", 4, img)
-    for p in [(2324, -599), (2590, -765), (1744, -403), (2305, -731), (2734, -259)]:  # 07시 r0012 실제 기록
+    # 허용 범위는 입구에서 먼 출구일수록 넓다 (위치 재기가 걸은 거리에 비례해 틀어짐). 07시 r0012 기록은 그 안이다
+    for p in [(2324, -599), (2590, -765), (1744, -403), (2305, -731), (2734, -259)]:
         mem.record(r, 4, NavMap(), p)
-    assert len(r.exits) == 5 and mem.exit_scattered(r)
+    assert len(r.exits) == 5 and not mem.exit_scattered(r)
+    r3 = mem.add("강적", 8, img)
+    for p in [(2324, -599), (1200, 600), (3000, -1500), (500, 200), (2734, 259)]:  # 정말 여기저기
+        mem.record(r3, 8, NavMap(), p)
+    assert mem.exit_scattered(r3)
     r2 = mem.add("전투", 1, img)
     for p in [(1800, -300), (1850, -330), (1790, -310), (2600, -700)]:
         mem.record(r2, 1, NavMap(), p)

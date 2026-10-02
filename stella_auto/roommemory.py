@@ -26,6 +26,13 @@ DEFAULT_DIR = ROOT / "data" / "rooms"
 MATCH_RESPONSE = 0.2  # 입구 화면이 이만큼 맞아야 같은 지도
 MATCH_NCC = 0.7  # 같은 지도 입구는 0.9~0.99. 0.57로 엉뚱한 지도를 알아본 일이 있었다
 EXIT_HISTORY = 8
+ENTRY_POS = (960.0, 555.0)  # 방에 들어왔을 때 캐릭터의 월드 좌표 (입구 화면 가운데)
+
+
+def exit_tolerance(p) -> float:
+    """기억한 출구가 얼마나 틀어져 있을 수 있는지. 위치 재기는 걸은 거리에 비례해 틀어진다
+    (1층 r0008: 입구에서 1900px쯤인 출구를 나간 자리가 한 줄로 900px 넘게 퍼져 있었다)."""
+    return max(300.0, 0.3 * math.hypot(p[0] - ENTRY_POS[0], p[1] - ENTRY_POS[1]))
 
 
 @dataclass
@@ -103,7 +110,8 @@ class RoomMemory:
             r.floors.append(floor)
         if exit_pos is not None:
             r.exits = (r.exits + [[round(exit_pos[0]), round(exit_pos[1])]])[-EXIT_HISTORY:]
-            far = r.exit is not None and math.hypot(exit_pos[0] - r.exit[0], exit_pos[1] - r.exit[1]) > 300
+            far = r.exit is not None and \
+                math.hypot(exit_pos[0] - r.exit[0], exit_pos[1] - r.exit[1]) > exit_tolerance(r.exit)
             if far and r.exit_count >= 2 and r.exit_conflicts < 1:
                 # 여러 번 확인한 출구와 많이 다르다: 이번 판 위치 재기가 틀어졌을 수 있어서 한 번은 무시한다
                 # (5층에서 오래 헤맨 뒤 출구 자리를 500px 틀리게 덮어썼다)
@@ -128,7 +136,8 @@ class RoomMemory:
             return False
         mx = sorted(p[0] for p in pts)[len(pts) // 2]
         my = sorted(p[1] for p in pts)[len(pts) // 2]
-        near = sum(math.hypot(p[0] - mx, p[1] - my) < 300 for p in pts)
+        tol = exit_tolerance((mx, my))
+        near = sum(math.hypot(p[0] - mx, p[1] - my) < tol for p in pts)
         return near < 0.6 * len(pts)
 
     def add_spot(self, r: Room, pos: tuple[float, float], kind: str) -> bool:
