@@ -40,6 +40,8 @@ from .screen import ScreenDetector, StableDetector
 from .strategy import CardChooser, RunState
 
 ROOT = Path(__file__).resolve().parent.parent
+# 한 층씩 모드(--step): 멈춘 봇은 이 파일이 생기면 다음 층까지 간다 (파일은 봇이 지운다)
+STEP_GO = ROOT / "logs" / "step.go"
 VK_F12 = 0x7B
 TAP_STATES = {"notes_gain", "ensemble_up", "tap_continue", "explore_done"}
 EMPTY_SPOT = (1300, 1045)  # "빈 곳을 터치" 화면에서 누를 곳. 가운데는 목록, 오른쪽 아래는 기록 화면의 "기록 저장" 자리라 피한다
@@ -51,6 +53,12 @@ ROOM_NAMES = ("전투", "선택", "강적", "거래", "리더")
 HUD_TEXT = ("기록점수", "점수", "자동전투", "전투중", "레벨", "레멜", "레텔", "간단히", "대화", "코인", "소리")
 NPC_SCAN_EVERY = 2.5  # 초. 이름표 찾기(OCR 전체 화면)는 무거워서 가끔만
 TALK_COOLDOWN = 8.0  # 대화가 끝나도 "F 대화"가 한동안 남아 있어서, 말 건 뒤 이만큼은 다시 안 건다
+# NPC는 늘 출구 근처에 생긴다 (사용자 설명): 층마다 출구 이만큼 앞에서 멈춰 이름표를 찾고 나서 들어간다
+EXIT_FRONT_DIST = 420  # 출구 피하기 거리(280+60)보다 밖: 안이면 출구 옆 NPC로 걸어갈 때 "출구가 가까워서 멈춤"에 걸린다
+POST_COMBAT_NPC_WAIT = 2.5  # 전투가 끝나고 NPC가 생기는 데 걸리는 시간
+# 알려진 NPC 이름. 오른쪽 위 레벨/돈 자리에 걸친 이름표도 이 이름이면 NPC로 본다
+# (18:45 1층: 출구 옆 포셔 이름표가 화면 오른쪽 위 끝에 걸려서 HUD로 알고 버렸다)
+KNOWN_NPCS = ("베아트리스", "포셔", "베르주", "베르너")
 GAMBLE_EXIT_WAIT = 8.0  # 3층: 출구가 보여도 전투 뒤 NPC가 나올 수 있어서 이만큼 더 둘러본다
 CHOICE_SEARCH = 30.0  # 선택의 방에서 NPC를 이만큼 찾아도 없으면 그냥 나간다
 COMBAT_TIMEOUT = 150.0  # 전투방에서 "소리 획득"을 이만큼 못 보면 전투 끝을 놓친 것으로 보고 진행
@@ -125,6 +133,8 @@ class Bot:
         self.floor_known = False  # 봇을 탑 중간에서 켜면 처음엔 몇 층인지 모른다
         self.floor_uncertain = False  # 지도에서 층을 못 읽어 짐작으로 둔 상태 (다음 제목을 그대로 믿는다)
         self.combat_done = True  # 이 층 전투가 끝났는지 ("소리 획득"을 봤는지)
+        self.combat_done_at: float | None = None  # "소리 획득"을 본 시각
+        self.exit_npc_checked = False  # 이 층에서 출구 앞 NPC 확인을 했는지
         self.joined_midway = False  # 봇을 층 중간에 켰는지 (전투 끝을 이미 지나쳤을 수 있다)
         self.enhance_count = 0  # 이 거래의 방에서 강화머신을 누른 횟수
         self.shop_done = False
@@ -140,6 +150,8 @@ class Bot:
         self.trade_tick = 0
         self.gamble_won = False
         self.require_gamble = True
+        self.step_mode = False  # 650원 이긴 뒤 층마다 멈추고 STEP_GO를 기다린다 (사용자가 한 층씩 보며 고칠 곳을 짚는다)
+        self.pause_pending = ""
         self.stop_after_tower = False
         self.max_runs = 0  # 이만큼 기록을 저장하면 멈춤 (0이면 계속)
         self.runs_done = 0
@@ -390,6 +402,13 @@ class Bot:
         if self.floor_known and self.loading_at is None:
             self.loading_at = time.monotonic()
 
+    def exit_front_goal(self, img: np.ndarray, char: tuple[float, float], pos: tuple[float, float]):
+        """출구 쪽 목표. 출구 EXIT_FRONT_DIST 안에 들어오면 None (걷기를 멈추고 NPC를 찾는다)."""
+        g = self.nav.exit_goal(img, char, pos)
+        if g is not None and math.hypot(g.pos[0] - pos[0], g.pos[1] - pos[1]) < EXIT_FRONT_DIST:
+            return None
+        return g
+
     def walk_stop(self, im: np.ndarray, *, talk: bool = False) -> bool:
         """걷기를 멈출 화면인지. 문에 들어가 로딩이 뜨는 순간도 여기서 기억해 둔다."""
         st = self.det.detect(im).state
@@ -400,6 +419,8 @@ class Bot:
     def new_floor(self, floor: int, room: str) -> None:
         room = ROOM_BY_FLOOR.get(floor, "") or room  # OCR로 읽은 방 이름보다 층 구성표를 믿는다
         self.combat_done = room not in COMBAT_ROOMS
+        self.combat_done_at = None
+        self.exit_npc_checked = False
         self.joined_midway = False
         self.enhance_count = 0
         self.shop_done = not self.has_shop(floor, room)
@@ -418,6 +439,8 @@ class Bot:
             self.run_tracked = True  # 층을 몰랐다가 1~3층으로 밝혀짐: 650원 도박 규칙을 다시 쓴다
         self.run.floor = floor
         self.floor_known = True
+        if self.step_mode and self.gamble_won:
+            self.pause_pending = f"{floor}층 시작"
         self.floor_uncertain = False
         self.exit_seen_at = None
         self.exit_fails = 0
@@ -485,7 +508,10 @@ class Bot:
             x, y, w, h = l.box
             if not (13 <= h <= 32 and 2 <= len(t) <= 6) or len(t) < len(l.text.replace(" ", "")) / 2:
                 continue
-            if (x < 480 and y < 320) or (x > 1400 and y < 80) or (x > 1700 and y < 260) or (x < 330 and 330 < y < 660):
+            top_right = (x > 1400 and y < 80) or (x > 1700 and y < 260)
+            if top_right and process.extractOne(t, KNOWN_NPCS, scorer=fuzz.ratio, score_cutoff=60):
+                top_right = False
+            if (x < 480 and y < 320) or top_right or (x < 330 and 330 < y < 660):
                 # 왼쪽 위 아이콘/기록 점수, 오른쪽 위 레벨/돈(y<80: 20층 상점 포셔 이름표가 y 90쯤이라 130이면 걸러졌다),
                 # 자동 전투, 왼쪽 아이템 획득 알림 줄 ("[체력의 소리]×6"을 "력의"라는 NPC로 읽고 걸어갔다)
                 continue
@@ -725,6 +751,8 @@ class Bot:
                 self._gamble_verify = self._gamble_gold_before
                 won = True
             self.gamble_won = self.gamble_won or won
+            if won and self.step_mode:
+                self.pause_pending = "650원 성공"
             self.run.keep_after_gamble = self.gamble_won
             self.log("650원", f"{'성공' if won else '실패'} ({why})", img)
             if self.run_tracked:
@@ -732,6 +760,8 @@ class Bot:
             self._gamble_gold_before = None
             if not won:
                 self.restart_pending = "650원 도박 실패"
+            if self.pause_pending:
+                return None  # 한 층씩 모드: 출구로 걷기 전에 바로 멈춘다
         if self.restart_pending:
             return "restart"
         if self.check_title(img):
@@ -915,6 +945,20 @@ class Bot:
         self.idle_since = None
         if self.exit_seen_at is None:
             self.exit_seen_at = now
+        if not self.exit_npc_checked:
+            # NPC는 늘 출구 근처에 생긴다 (사용자 설명, 1~20층 모두). 들어가기 전에 출구 앞에서 멈춰 한 번 찾는다
+            # (18:45 1층: 전투가 끝나고 2초 만에 출구로 가서, 출구 옆에 생긴 포셔를 지나쳤다)
+            self.exit_npc_checked = True
+            self.log("이동", f"출구 앞까지 가서 NPC를 찾음: {goal.kind} ({goal.pos[0]:.0f}, {goal.pos[1]:.0f})", img)
+            res = self.nav.walk(self.exit_front_goal, self.walk_stop, max_sec=30, why="출구 앞")
+            self.log("이동", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
+            if self.combat_done_at is not None:
+                left = POST_COMBAT_NPC_WAIT - (time.monotonic() - self.combat_done_at)
+                if left > 0:
+                    time.sleep(left)  # 전투가 막 끝났으면 NPC가 생길 때까지
+            self.npc_scanned = 0.0  # 다음 화면에서 바로 이름표를 찾는다
+            self.npc_marker_rest_until = 0.0
+            return None
         if self.require_gamble and self.run_tracked and not self.gamble_won and self.run.floor >= GAMBLE_LAST_FLOOR:
             # 3층에서도 650원 NPC가 나올 수 있다. 출구가 보인 뒤에도 잠깐 NPC를 더 찾고 나서 판단한다
             if self.run.floor == GAMBLE_LAST_FLOOR and now - self.exit_seen_at < GAMBLE_EXIT_WAIT:
@@ -1011,6 +1055,24 @@ class Bot:
             time.sleep(0.5)
 
     # -- 층, 판 ---------------------------------------------------------------
+    def wait_for_go(self) -> float:
+        """한 층씩 모드: STEP_GO 파일이 생길 때까지 멈춘다. 멈춘 시간(초)을 돌려준다 (층 시간 초과에 안 세게)."""
+        why, self.pause_pending = self.pause_pending, ""
+        self.gi.release_all()
+        STEP_GO.unlink(missing_ok=True)
+        self.log("멈춤", f"한 층씩 모드: {why}. 다음으로 가려면 {STEP_GO.name} 파일", self.grab())
+        t0 = time.monotonic()
+        while not STEP_GO.exists():
+            time.sleep(0.2)
+        STEP_GO.unlink(missing_ok=True)
+        paused = time.monotonic() - t0
+        # 멈춘 동안 지난 시간은 전투/상점 기다리는 시간에서도 뺀다
+        self.floor_changed_at += paused
+        if self.shop_search_start is not None:
+            self.shop_search_start += paused
+        self.log("멈춤", f"이어서 감 ({paused:.0f}초 멈춤)")
+        return paused
+
     def run_floor(self, timeout: float = 420) -> str:
         """한 층을 끝까지. 'next_floor' 또는 'restart'를 돌려준다.
         650원을 이긴 판은 층 하나에서 늦어지는 게 판을 버리는 것보다 나아서 더 기다린다."""
@@ -1018,6 +1080,8 @@ class Bot:
         warned = False
         last_state = None
         while True:
+            if self.pause_pending:
+                start += self.wait_for_go()
             el = time.monotonic() - start
             if el > timeout * (1.7 if self.gamble_won else 1.0):
                 break
@@ -1050,6 +1114,7 @@ class Bot:
             elif s in TAP_STATES:
                 if s == "notes_gain" and not self.combat_done:
                     self.combat_done = True
+                    self.combat_done_at = time.monotonic()
                     self.log("전투", "소리 획득 -> 전투 끝")
                     if self.run_tracked:
                         self.save_state()
@@ -1644,6 +1709,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--runs", type=int, default=0, help="탑을 이만큼 끝내면(기록 저장) 멈춤. 0이면 계속")
     ap.add_argument("--hours", type=float, default=0, help="이만큼 시간이 지나면 다음 판을 시작하지 않고 멈춤. 0이면 계속")
     ap.add_argument("--no-gamble", action="store_true", help="시험용: 650원 도박 조건 없이 계속 올라간다")
+    ap.add_argument("--step", action="store_true",
+                    help="한 층씩: 650원을 이기면 멈추고, 그 뒤 층마다 멈춘다. logs/step.go 파일을 만들면 다음 층까지")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -1659,6 +1726,7 @@ def main(argv: list[str] | None = None) -> int:
     pid_file.write_text(str(os.getpid()))
     bot = Bot(Preset.load(args.preset))
     bot.require_gamble = not args.no_gamble
+    bot.step_mode = args.step
     bot.max_runs = args.runs
     bot.deadline = time.monotonic() + args.hours * 3600 if args.hours else None
 
