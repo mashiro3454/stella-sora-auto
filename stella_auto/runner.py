@@ -340,6 +340,12 @@ class Bot:
             time.sleep(0.4)
             return
         pairs = [(o.text, o.effect) for o in options]
+        if len(pairs) == 1 and getattr(self, "_single_waits", 0) < 4:
+            # 보기를 하나만 읽었다: 보기가 아직 다 안 나왔거나 못 읽은 것 (사용자: "선택지가 하나밖에 없다고?")
+            self._single_waits = getattr(self, "_single_waits", 0) + 1
+            time.sleep(0.5)
+            return
+        self._single_waits = 0
         if is_quiz(question) and quiz_answer(question, pairs) is None and self._quiz_waits < 8:
             # 정답지에 있는 퀴즈인데 정답 보기가 아직 안 보인다: 보기가 하나씩 나타나는 중이다
             # (보기 하나만 읽고 틀린 답을 고른 일이 있었다)
@@ -356,6 +362,11 @@ class Bot:
         gold_before = self.read_gold(img)
         self.log("선택지", f"{question} -> [{idx}] '{options[idx].text if idx >= 0 else 'ESC'}' ({rule})", img,
                  options=pairs, chosen=idx, rule=rule)
+        if "알림" in rule:
+            # 사용자가 나중에 보고 기준을 정할 선택지 (작은 내기, 보상을 고르는 퀴즈): 원본 화면을 남긴다
+            d = self.log_path.parent / "choice_alerts"
+            d.mkdir(parents=True, exist_ok=True)
+            cv2.imencode(".png", img)[1].tofile(str(d / f"{time.strftime('%m%d_%H%M%S')}_{self.run.floor:02d}.png"))
         with self.choice_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "floor": self.run.floor,
                                 "question": question, "options": pairs, "chosen": idx, "rule": rule},
@@ -1476,27 +1487,57 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
         return q, "퀴즈 정답지"
     # OCR이 "획득"을 "획티", "획듣"처럼 읽는다 (운명과 흥정: 공짜 선택지를 놓치고 50원짜리를 골랐다)
     texts = [re.sub(r"획.", "획득", (t + " " + e).replace(" ", "")) for t, e in options]
+    effects = [re.sub(r"획.", "획득", e.replace(" ", "")) for _, e in options]
+    if is_quiz(question) and len(set(re.sub(r"[^가-힣]", "", e) for e in effects)) > 1 and \
+            not all("정답" in e or "정담" in e for e in effects if e):
+        # 퀴즈인데 보기마다 보상이 다르다 ("A랑 B 중에 뭐 가질래"): 사용자가 정한다 (2026-10-02)
+        return 0, "퀴즈: 보상 고르기 (알림)"
+    # 30원 받기 ("300 획득": 코인 그림을 0으로 읽는다). "30%"나 "1300"은 아니다
+    thirty = [i for i, e in enumerate(effects) if re.search(r"(?<![\d%])300?획득", e)]
     for i, s in enumerate(texts):
         if "650" in s and floor <= GAMBLE_LAST_FLOOR:
             return i, "650원 도박"
+    # 사용자 규칙 (2026-10-02 14시, docs/choices-list.md 번호)
+    hp = [i for i, e in enumerate(effects)
+          if "HP" in e and ("소모" in e or "차감" in e) and ("잠재력" in e or "획득" in e) and "회복" not in e]
+    if hp:
+        rare = [i for i in hp if "희귀" in effects[i]]
+        return (rare[0], "HP 내고 희귀 잠재력 (15번)") if rare else (hp[0], "HP 내고 잠재력/돈")
     for i, s in enumerate(texts):
-        if "HP" in s and ("소모" in s or "차감" in s) and ("잠재력" in s or "획득" in s) and "회복" not in s:
-            return i, "HP 내고 잠재력/돈"
-    for i, s in enumerate(texts):
-        if "33%" in s and "잠재력" in s:
+        if "33%" in s and "잠재력" in s and "HP" not in s:
             return i, "33% 잠재력"
     for i, s in enumerate(texts):
         # "코인으로 바꿔줘 / 랜덤 소리 5개 소모, 150 획득" 처럼 "판다"는 말이 없을 때도 있다
         if "소리" in s and "150" in s and ("팔" in s or "판매" in s or ("소모" in s and "획득" in s)):
             return i, "소리 팔고 150원"
-    if any("소리" in s and ("90" in s or "140" in s) for s in texts):
-        for i, s in enumerate(texts):
-            if "30" in s and "획득" in s and "소리" not in s:
-                return i, "소리 사지 말고 30원"
-    hundred = [i for i, s in enumerate(texts) if "100" in s and "차감" not in s]
-    thirty = [i for i, s in enumerate(texts) if re.search(r"(?<!\d)30", s) and "획득" in s]
-    if hundred and thirty and set(hundred) != set(thirty):
-        return (hundred[0], "100원 (6층 이하)") if floor <= 6 else (thirty[0], "30원 (7층 이상)")
+    if thirty and any("소리" in e and "소모" in e and ("90" in e or "140" in e) for e in effects):
+        return thirty[0], "소리 사지 말고 30원"
+    change = [i for i, e in enumerate(effects) if "변화" in e]
+    if change:
+        i = change[0]
+        if "잠재력" in effects[i]:
+            return i, "돈·잠재력 랜덤 변화 (3번, 모든 층)"
+        if floor <= 6 or not thirty:
+            return i, "돈·HP 랜덤 변화 = 100원 쪽 (2번, 6층 이하)"
+        return thirty[0], "30원 (2번, 7층 이상)"
+    if thirty and any("소실" in e for e in effects):
+        return thirty[0], "시약은 30원 (4번)"
+    for i, e in enumerate(effects):
+        if "회복" in e and "확률" in e and ("잠재력" in e or "소리" in e) and "소모" not in e:
+            return i, "호의: 50% 잠재력/소리 (10~12번)"
+    for i, e in enumerate(effects):
+        if "확률" in e and "획득" in e and "잠재력" in e and not any(w in e for w in ("소모", "차감", "회복", "HP")):
+            return i, "작은 내기: 50% 쪽 (14번, 알림)"
+    for i, e in enumerate(effects):
+        if "소리" in e and "소모" in e and "잠재력" in e:
+            return i, "소리 내고 희귀 잠재력 (17번)"
+    buy = [i for i, e in enumerate(effects) if "소모" in e and "잠재력" in e and "HP" not in e]
+    if buy:
+        def cost(e: str) -> int:
+            m = re.search(r"(\d+)을?소모", e)
+            return int(m.group(1)) if m else 10 ** 6
+        i = min(buy, key=lambda k: cost(effects[k]))
+        return i, "돈 내고 잠재력, 가장 싼 것 (13·18번)"
     loss = ("소모", "차감", "소실", "감소", "잃", "변화")  # "랜덤 변화", "HP 30% 소실"도 잃을 수 있는 것
     pick = free_note_choice(texts, note_users, loss, note_have)
     if pick is not None:

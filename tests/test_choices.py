@@ -19,15 +19,46 @@ def test_gamble_only_floor_1_to_3():
     assert choose_option(GAMBLE, 4)[0] != 1
 
 
-def test_unknown_logged_and_safe():
-    idx, rule = choose_option(BEATRICE, 2)
-    assert idx == 1 and rule.startswith("모름")
+def test_random_change_by_floor():
+    # 2번 (사용자 규칙 2026-10-02): 돈·HP 랜덤 변화(+100/-100/+30/0) — 6층 이하 그쪽, 7층부터 30원
+    assert choose_option(BEATRICE, 2)[0] == 0
+    assert choose_option(BEATRICE, 7)[0] == 1
 
 
-def test_hundred_or_thirty_by_floor():
-    opts = [("100원 줘!", "50% 확률로 100 획득"), ("30원이면 돼.", "30 획득")]
-    assert choose_option(opts, 6)[0] == 0
-    assert choose_option(opts, 7)[0] == 1
+def test_user_choice_rules_2026_10_02():
+    # docs/choices-list.md 번호. 문장은 logs/choices.jsonl의 OCR 그대로
+    mirror = [("거울아 거울아...... 부디", "0 또는 잠재력 랜덤 변화 발생!"), ("안 대, 너무 위험해 보여.•", "300 획득")]
+    assert choose_option(mirror, 15)[0] == 0  # 3번: 모든 층
+    potion = [("해보지 뭐!", "1득, 33% 확률로 HP 20% 회복, 33% 확률로 HP 30% 소실"), ("다음에!", "300 획득")]
+    assert choose_option(potion, 2)[0] == 1  # 4번: 30원
+    favor = [("비즈니스는 비즈니스!", "1000 소모, 1개의 랜덤 잠재력 획득 I"),
+             ("좋은 물건 좀 선물해", "% 확률로 HP 30% 회복, 50% 확률로 랜덤 잠재력 1개 획득")]
+    assert choose_option(favor, 3)[0] == 1 and choose_option(favor, 9)[0] == 1  # 11번: 모든 층 호의
+    favor_rare = [("비즈니스는 비즈니스!", "1800을 소모하고, 랜덤 희귀 잠재력 1개를 획득"),
+                  ("좋은 물건 좀 선물해", "률로 HP 30% 회복, 50% 확률로 랜덤 희귀 잠재력 1개 획득")]
+    assert choose_option(favor_rare, 5)[0] == 1  # 12번
+    luck = [("신중하게 행동하는 게", "1000 소모, 1개의 랜덤 일반 잠재력 획득"),
+            ("적극적으로 행동해 봐!", "1200 소모, 1개의 랜덤 잠재력 획득"), ("", "300 획득")]
+    assert choose_option(luck, 12)[0] == 0  # 13번: 모든 층 100원
+    bet = [("뜻밖의 수확!", "% 확률로 1000 획득, 50% 확률로 1개의 랜덤 잠재력 획득"),
+           ("조금쯤의 대가는 괜찮아.", "1200 소모, 1개의 랜덤 잠재력 획득")]
+    idx, rule = choose_option(bet, 4)
+    assert idx == 0 and "알림" in rule  # 14번: 지금처럼 + 화면 찍기
+    hp3 = [("맛있는거 좀 줘!", "HP 20% 회복"), ("나한테 도파민 좀 주』", "HP 30%를 소모, 랜덤 잠재력 1개를 획득"),
+           ("나는 가장 세고, 기운", "50% HP 소모, 1개의 랜덤 희귀 잠재력 획득")]
+    assert choose_option(hp3, 8)[0] == 2  # 15번: HP 50% 희귀
+    limited = [("소리를 내.", "L랜덤 소리 10개 소모, 랜덤 희귀 잠재력 1개를 획득"),
+               ("스밀라 코인을 내.", "12000을 소모하고, 랜덤 희귀 잠재력 1개를 획득"), ("필요 없어.", "300 획득")]
+    assert choose_option(limited, 6)[0] == 0  # 17번
+    stronger = [("강해지고 싶어!", "1200 소모, 1개의 랜덤 지원 잠재력 획득"),
+                ("더 강해지고 싶어!", "1600 소모, 1개의 랜덤 메인 잠재력 획득"),
+                ("세상에서 가장 강한 존", "2000을 소모하고, 랜덤 희귀 잠재력 1개를 획득"), ("이미 충분히 강해...", "")]
+    assert choose_option(stronger, 10)[0] == 0  # 18번
+    support = [("서로서로 돕는 거지!", "랜덤 1개의 지원 캐릭터 잠재력 획득"), ("우린 역할을 나눠서", "랜덤 소리 5개 획득")]
+    assert choose_option(support, 10)[0] == 0  # 6번: 지금처럼
+    songs = [("노래, 골라도 돼?", "1400 소모, 10개의 강공의 소리4 획득"), ("노래, 골라도 대?", "1400 소모, 10개의 행운의 소리 획득"),
+             ("네가 듣고 싶은 결로", "900 소모, 10개의 랜덤 소리 획득"), ("지금은 안 돼.", "")]
+    assert choose_option(songs, 10)[0] == 3  # 16번: 지금처럼 (안 함)
 
 
 def test_notes():
