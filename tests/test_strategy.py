@@ -360,3 +360,32 @@ def test_weak_upgrade_ok_when_mains_high(chooser):
     low = dict(high); low[BY_NAME["드높은 기개"].id] = 4
     d = chooser.choose(offer, RunState(floor=20, gold=1000, owned=low))
     assert d.action == "reroll" and "한 번" in d.reason
+
+
+def test_enhance_avoids_stranding_at_5(chooser):
+    # 사용자 2026-10-03: +2 강화(판에 5번)가 5레벨에 떨어지면 1레벨을 버린다.
+    # +1 강화 동점이면 5레벨을 만드는 쪽(4→5) 대신 4레벨에 멈추는 쪽(3→4)을 고른다 (4,4를 만든다)
+    st = RunState(floor=5, owned=owned(섬멸의_잔향=4, 관통_탄도=3))
+    d = chooser.choose_enhance(cards(("섬멸의 잔향", 5, 4), ("관통 탄도", 4, 3)), st)
+    assert d.card.potential.name == "관통 탄도"
+    # +2를 5번 다 썼으면 예전 동점 규칙대로 (레벨 높은 쪽 먼저)
+    st2 = RunState(floor=5, owned=owned(섬멸의_잔향=4, 관통_탄도=3), plus2_taken=5)
+    d = chooser.choose_enhance(cards(("섬멸의 잔향", 5, 4), ("관통 탄도", 4, 3)), st2)
+    assert d.card.potential.name == "섬멸의 잔향"
+    # 5→6(마무리)은 5레벨을 만드는 게 아니라서 그대로
+    d = chooser.choose_enhance(cards(("섬멸의 잔향", 6, 5), ("바람 정령의 공명", 3, 2)), RunState(floor=5))
+    assert d.card.potential.name == "섬멸의 잔향"
+
+
+def test_defer_enhance_when_all_at_5(chooser):
+    from stella_auto.runner import Bot
+    b = Bot(Preset.load(Path(__file__).parent.parent / "presets" / "바람.json"))
+    b.run_tracked = True
+    b.run.owned = {BY_NAME["섬멸의 잔향"].id: 5, BY_NAME["관통 탄도"].id: 5}
+    b.shop_done = False
+    assert b.defer_enhance_for_plus2()  # 전부 5레벨 + +2 남음: 음료부터
+    b.run.plus2_taken = 5
+    assert not b.defer_enhance_for_plus2()  # +2를 다 썼으면 그냥 강화 (5→6 마무리)
+    b.run.plus2_taken = 0
+    b.run.owned[BY_NAME["관통 탄도"].id] = 4
+    assert not b.defer_enhance_for_plus2()  # 4레벨짜리가 있으면 +2를 받을 수 있다

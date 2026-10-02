@@ -37,6 +37,7 @@ from .score import RecordResult, score_record
 from .pathing import Goal, Navigator
 from .preset import Preset
 from .screen import ScreenDetector, StableDetector
+from . import strategy
 from .strategy import CardChooser, RunState
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -368,6 +369,8 @@ class Bot:
             self.gi.click(*d.card.click)
             time.sleep(0.35)
             self.gi.key("space")
+            if enhance and any(c.level_from is not None and c.gain >= 2 for c in cards):
+                self.run.plus2_taken += 1  # +2 강화 화면 (판에 5번뿐)
             self.chooser.record_pick(d.card, self.run)
             if self.run_tracked:
                 self.save_state()
@@ -661,6 +664,8 @@ class Bot:
             return False
         if self.defer_enhance_for_priority():
             return False  # 강화 우선 캐릭터 잠재가 없다: 상점 음료부터
+        if self.defer_enhance_for_plus2():
+            return False  # 강화할 게 전부 5레벨인데 +2가 남았다: 음료로 낮은 렙 잠재부터 만든다
         gold = self.read_gold(img)
         if gold is not None and gold < price:
             # 모자라 보이면 몇 번 더 읽는다 (08:01 20층: 1821원인데 강화를 건너뛰고 상점에서 돈을 다 썼다).
@@ -698,6 +703,16 @@ class Bot:
         if not self.shop_done:
             return True
         return self.shop_potions_left and self.shop_reopens < 2 and self.run.gold >= 700
+
+    def defer_enhance_for_plus2(self) -> bool:
+        """강화할 필수/다다익선(6)이 전부 5레벨 이상이고 +2 강화가 남아 있으면 강화를 미룬다
+        (사용자 2026-10-03: +2가 5레벨에 떨어지면 1레벨을 버린다. 음료로 낮은 렙 잠재를 만들고 온다)."""
+        if not self.run_tracked or self.run.plus2_taken >= strategy.PLUS2_PER_RUN:
+            return False
+        worth = self.worth_enhancing()
+        if not worth or any(self.run.owned.get(pid, 0) <= 4 for pid in worth):
+            return False
+        return self.shop_can_feed()
 
     def defer_enhance_for_priority(self) -> bool:
         """강화를 미루고 상점부터 가야 하는지."""
@@ -1589,7 +1604,8 @@ class Bot:
                 # 같은 층에서 봇을 껐다 켜도 강화머신 횟수/상점 진행을 이어받는다 (23:04 19층: 횟수가 0으로
                 # 리셋돼 180원까지 규칙인데 실제론 240원짜리를 눌렀다)
                 "enhance_count": self.enhance_count, "shop_done": self.shop_done,
-                "shop_rerolled": self.shop_rerolled, "shop_reopens": self.shop_reopens}
+                "shop_rerolled": self.shop_rerolled, "shop_reopens": self.shop_reopens,
+                "plus2_taken": r.plus2_taken}
         try:
             tmp = self.state_path().with_suffix(".tmp")
             tmp.write_text(json.dumps(data), encoding="utf-8")
@@ -1609,6 +1625,7 @@ class Bot:
         self.run.lv3_new_taken = d["lv3_new_taken"]
         self.run.lv2_new_taken = d["lv2_new_taken"]
         self.run.rerolls_early = d["rerolls_early"]
+        self.run.plus2_taken = d.get("plus2_taken", 0)
         self.gamble_won = d["gamble_won"]
         self.run.keep_after_gamble = self.gamble_won
         self.run_tracked = True

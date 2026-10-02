@@ -14,6 +14,7 @@ from .preset import PotentialGoal, Preset
 from .score import ScoreWeights, potential_weight
 
 LV3_LIMIT = 10  # 한 판에 새 잠재력 Lv3 카드는 10번까지
+PLUS2_PER_RUN = 5  # 강화머신 +2 강화는 한 판에 5번 (사용자 2026-10-03). 6레벨에서 잘리면 1레벨을 버린다
 REROLL_COST = 40
 MAX_REROLLS_PER_PICK = 5  # 한 번의 카드 선택에서 연속 5번 이상 리롤하면 재시작
 MAX_REROLLS_EARLY = 10  # 6층까지 리롤이 10번을 넘으면 재시작
@@ -59,6 +60,7 @@ class RunState:
     keep_after_gamble: bool = False
     fish_this_pick: int = 0  # 이번 선택 화면에서 필수 찾기로 한 리롤
     fish_total: int = 0  # 이번 판 필수 찾기 리롤 (시험 기록용)
+    plus2_taken: int = 0  # 강화머신에서 +2 강화 화면을 쓴 횟수 (한 판에 PLUS2_PER_RUN번뿐)
 
 
 @dataclass
@@ -270,10 +272,21 @@ class CardChooser:
         return Decision("pick", pick, "리롤 못 함, 덜 나쁜 것", values)
 
     def choose_enhance(self, cards: list[Card], state: RunState) -> Decision:
-        """강화머신: 오르는 점수가 가장 큰 카드. 같으면 프리셋 캐릭터 순서."""
+        """강화머신: 오르는 점수가 가장 큰 카드. 같으면 5레벨을 만들지 않는 쪽 → 캐릭터 순서.
+
+        +2 강화(판에 5번)는 6레벨에서 잘린다 (사용자 2026-10-03): +1 강화로 필수/다다익선(6)을 5레벨에
+        세워 두면 나중에 +2가 떴을 때 1레벨을 버린다. 그래서 +2가 남아 있는 동안은 동점이면
+        4레벨에 멈추는 쪽(3→4)을 5레벨을 만드는 쪽(4→5)보다 먼저 고른다. 5→6(마무리)은 괜찮다."""
         scored = [(self.value(c, state, ignore_floor=True)[0] or 0.0, c) for c in cards]
         values = {c.slot: v for v, c in scored}
-        best = max(scored, key=lambda t: (t[0], self._tiebreak(t[1])))[1]
+
+        def strands(c: Card) -> bool:
+            goal = self.goals.get(c.potential.id) if c.potential else None
+            main_high = goal and (goal.mark == "필수" or (goal.mark == "다다익선"
+                                                          and goal.target_level >= self.w.plenty_high_min_target))
+            return bool(main_high and c.level_to == 5 and state.plus2_taken < PLUS2_PER_RUN)
+
+        best = max(scored, key=lambda t: (t[0], not strands(t[1]), self._tiebreak(t[1])))[1]
         return Decision("pick", best, f"강화: {best.potential.name if best.potential else '?'}", values)
 
     def record_pick(self, card: Card, state: RunState) -> None:
