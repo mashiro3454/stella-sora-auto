@@ -16,6 +16,7 @@ cam + p. 카메라는 비스듬히 내려다봐서 위아래가 좌우보다 짧
 from __future__ import annotations
 
 import math
+import time
 
 import cv2
 import numpy as np
@@ -25,6 +26,11 @@ SMALL = (1920 // SCALE, 1080 // SCALE)
 MIN_RESPONSE = 0.08  # 이보다 낮으면 비교 실패로 본다 (전투 이펙트, 화면 전환). 걸을 때 0.2~0.6, 엉뚱한 봉우리 0.02~0.05
 MAX_STEP = 420  # 한 번에 이보다 많이 밀렸다고 나오면 믿지 않는다 (월드 px)
 KEYFRAME_EVERY = 260  # 이만큼 움직일 때마다 기준 화면을 하나씩 남긴다
+# 절대 보정: 프레임끼리만 비교하면 오차가 조금씩 쌓인다 (한 방에서 50~150px까지 — 기억한 자리/출구가
+# 어긋나는 원인). 몇 초마다 가까운 기준 화면과 직접 비교해서 위치를 당겨 맞춘다 (2026-10-03).
+ABS_FIX_EVERY = 2.0  # 초
+ABS_FIX_MIN_RESP = 0.18  # 이보다 응답이 낮으면 보정 안 함
+ABS_FIX_MAX = 180  # 이보다 큰 오차로 나오면 비교가 틀린 것으로 보고 버린다
 
 # 화면에 붙어 있는 것들 (HUD, 방 제목은 따로). (x0, y0, x1, y1)
 FIXED_BOXES = (
@@ -87,6 +93,8 @@ class Odometry:
         self.keyframes: list[tuple[np.ndarray, np.ndarray]] = []  # (작은 화면, cam)
         self.failures = 0  # 연속으로 비교에 실패한 횟수
         self.last_response = 1.0
+        self.last_abs_fix = 0.0
+        self.abs_fixed_total = 0.0  # 이 방에서 절대 보정으로 당긴 거리 합 (통계)
 
     def update(self, img: np.ndarray) -> bool:
         """새 화면으로 카메라 위치를 갱신. 비교에 실패하면 False (위치는 그대로)."""
@@ -101,6 +109,7 @@ class Odometry:
             self.cam -= (dx, dy)
             self.prev = cur
             self.failures = 0
+            self._abs_fix(cur)  # 보정을 먼저: 틀어진 위치로 기준 화면을 남기지 않게
             self._maybe_keyframe(cur)
             return True
         # 많이 움직였거나 이펙트가 덮었다: 남겨 둔 기준 화면들과 비교해서 위치를 되찾는다
@@ -112,6 +121,25 @@ class Odometry:
         if self.failures >= 3:
             self.prev = cur  # 계속 실패하면 지금 화면부터 다시 이어 간다 (위치는 조금 틀어진다)
         return False
+
+    def _abs_fix(self, cur: np.ndarray) -> None:
+        """가까운 기준 화면과 직접 비교해서 쌓인 오차를 당겨 맞춘다 (반씩, 튀지 않게)."""
+        now = time.monotonic()
+        if now - self.last_abs_fix < ABS_FIX_EVERY or not self.keyframes:
+            return
+        self.last_abs_fix = now
+        kf, kcam = min(self.keyframes, key=lambda k: np.hypot(*(k[1] - self.cam)))
+        if np.hypot(*(kcam - self.cam)) > 600:
+            return  # 겹치는 부분이 적으면 비교가 안 된다
+        (dx, dy), resp = shift_between(kf, cur)
+        if resp < ABS_FIX_MIN_RESP:
+            return
+        err = (kcam - (dx, dy)) - self.cam
+        d = math.hypot(*err)
+        if d > ABS_FIX_MAX or d < 3:
+            return
+        self.cam += err * 0.5
+        self.abs_fixed_total += d * 0.5
 
     def _maybe_keyframe(self, cur: np.ndarray) -> None:
         if all(np.hypot(*(self.cam - c)) > KEYFRAME_EVERY for _, c in self.keyframes):

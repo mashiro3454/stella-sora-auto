@@ -117,3 +117,30 @@ def test_find_character_with_low_hp():
     # 체력이 반쯤 깎여 초록 칸이 2.5칸: 빈 칸(회청색)도 세서 찾아야 한다 (8층에서 4분 멈춤)
     x, y = nv.find_character(load("field__live_lowhp.jpg"))
     assert abs(x - 985) < 30 and abs(y - 515) < 20
+
+
+def test_odometry_abs_fix_pulls_back_drift():
+    # 절대 보정 (2026-10-03): 프레임끼리 쌓인 오차를 기준 화면과 직접 비교해서 당겨 맞춘다
+    import numpy as np
+    from stella_auto import odometry as od
+    rng = np.random.default_rng(7)
+    world = rng.integers(0, 255, (1600, 2600), np.uint8)
+    world = cv2.GaussianBlur(world, (9, 9), 0)
+
+    def frame(x, y):
+        crop = world[y:y + 1080, x:x + 1920]
+        return cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+
+    o = od.Odometry()
+    o.update(frame(200, 200))
+    o.update(frame(400, 300))
+    assert np.hypot(*(o.cam - (200, 100))) < 12  # 밀림을 제대로 잼
+    # 오차가 쌓였다고 치고 위치를 80px 틀어 놓는다
+    o.cam = o.cam + (80, 0)
+    o.last_abs_fix = 0.0  # 바로 보정하게
+    o.update(frame(410, 300))
+    o.last_abs_fix = 0.0
+    o.update(frame(420, 300))
+    # 첫 보정(반)으로 오차가 80 -> 40대로 줄어야 한다 (그 뒤엔 보정된 위치가 새 기준이 된다)
+    assert np.hypot(*(o.cam - (220, 100))) < 45
+    assert o.abs_fixed_total > 25

@@ -1370,7 +1370,7 @@ class Bot:
                 self.on_choice(img)
             elif s == "dialog":
                 self.gi.key("space")
-                time.sleep(0.5)
+                time.sleep(0.35)  # 화면 판정(연속 3번)이 빨라져서 더 짧아도 안전
             elif s in TAP_STATES:
                 if s == "notes_gain" and not self.combat_done:
                     self.combat_done = True
@@ -1383,7 +1383,7 @@ class Bot:
                     # (출구를 알면 바닥 무늬를 출구로 알고 강화머신/상점 쪽으로 못 가는 일이 줄어든다)
                     self.nav.left_by_exit()
                 self.gi.click(*EMPTY_SPOT)
-                time.sleep(0.7)
+                time.sleep(0.5)
             elif s == "shop":
                 self.on_shop(img)
             elif s == "bag":
