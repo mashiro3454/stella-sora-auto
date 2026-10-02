@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .cards import Card
+from .gamedata import default_gamedata
 from .preset import PotentialGoal, Preset
 from .score import ScoreWeights, potential_weight
 
@@ -26,6 +27,19 @@ CARD_ONLY_VALUE = 50  # 명함만: 1레벨이라도 있으면 되는 것
 FISH_FLOOR = 13
 FISH_PER_PICK = 3  # 한 선택 화면에서 필수 찾기 리롤은 이만큼까지 (그다음엔 평소대로 고른다)
 FISH_RESERVE = 200  # 이만큼은 남긴다
+LAST_FLOOR = 20
+# 사용자 규칙 (2026-10-02 영상 검토 뒤):
+# - 20층에서 0레벨 필수가 있으면 그게 (Lv2 이상으로) 뜰 때까지 리롤한다. 한 화면 횟수 제한 없음, 돈이 있는 만큼.
+# - 한 캐릭터의 보라+금 잠재가 6개 이상이고 그중 2개 이상이 6레벨 미만이면 그 캐릭터의 새 잠재는 안 뜬다.
+#   그땐 리롤로 찾지 말고 그 캐릭터의 잠재를 6레벨로 올려서 막힌 걸 푼다.
+CHAR_LOCK_COUNT = 6
+CHAR_LOCK_UNFINISHED = 2
+UNLOCK_BONUS = 500
+# - 다다익선(목표 3)은 지원 캐릭터는 13층부터, 메인(레이스)은 18층부터 레벨당 35점 (새 Lv3 105점 > 필수 +1 100점)
+PLENTY_LOW_LATE = 35
+PLENTY_LOW_LATE_FLOOR = {"master": 18, "assist": 13}
+# - 목표를 넘은 다다익선(목표 3) 레벨업만 뜨면 리롤을 한 번 해 보고, 그래도 없으면 그냥 집는다
+WEAK_REROLL_RESERVE = 200
 
 
 @dataclass
@@ -67,6 +81,7 @@ class CardChooser:
         self.w = weights or ScoreWeights()
         self.goals: dict[int, PotentialGoal] = {p.id: p for ch in preset.characters for p in ch.potentials}
         self.char_of: dict[int, int] = {p.id: ch.char_id for ch in preset.characters for p in ch.potentials}
+        self.role_of: dict[int, str] = {ch.char_id: "master" if ch.slot == "master" else "assist" for ch in preset.characters}
         main_goals = [g for g in self.goals.values() if g.kind != "core" and g.mark in ("필수", "다다익선")]
         self.lv2_budget = max(0, len(main_goals) - LV3_LIMIT)
 
@@ -96,7 +111,9 @@ class CardChooser:
         if card.is_new and not ignore_floor:
             if card.level_to <= 1 and main:
                 return None, "Lv1은 안 집음"
-            if card.level_to == 2 and main and not safeguard and state.lv2_new_taken >= self.lv2_budget:
+            # 20층(마지막 층)엔 아낄 까닭이 없다 (영상: 20층 강풍의 자태 새 Lv2 → 상점 음료로 Lv6)
+            if (card.level_to == 2 and main and not safeguard and state.lv2_new_taken >= self.lv2_budget
+                    and state.floor < LAST_FLOOR):
                 return None, f"Lv2 예산({self.lv2_budget}) 다 씀"
             if card.level_to >= 3 and not main and LV3_LIMIT - state.lv3_new_taken <= self._unacquired_main(state):
                 return None, "Lv3 횟수는 필수/다다익선용으로 남겨 둠"
@@ -105,18 +122,58 @@ class CardChooser:
             v = CARD_ONLY_VALUE if cur == 0 else 0.0
         else:
             cap = self.w.max_scored_level
-            v = (min(card.level_to, cap) - min(cur, cap)) * potential_weight(goal.mark, goal.target_level, self.w)
+            v = (min(card.level_to, cap) - min(cur, cap)) * self.weight(goal, state)
         if safeguard and card.level_to >= 2:
             v += SAFEGUARD_BONUS
+        if v > 0 and not card.is_new and cur < 6 and self.unlock_wanted(card.potential.char_id, state):
+            v += UNLOCK_BONUS
         return float(v), goal.mark
 
+    def weight(self, goal: PotentialGoal, state: RunState) -> float:
+        w = potential_weight(goal.mark, goal.target_level, self.w)
+        if goal.mark == "다다익선" and goal.target_level < self.w.plenty_high_min_target:
+            role = self.role_of.get(self.char_of.get(goal.id, -1), "assist")
+            if state.floor >= PLENTY_LOW_LATE_FLOOR[role]:
+                w = PLENTY_LOW_LATE
+        return w
+
+    # -- 캐릭터별 새 잠재 막힘 (사용자 설명) ------------------------------------------
+    @staticmethod
+    def char_levels(char_id: int, state: RunState) -> list[int]:
+        """이 캐릭터의 가진 보라+금 잠재 레벨들."""
+        gd = default_gamedata()
+        return [lv for pid, lv in state.owned.items() if lv > 0 and pid in gd.potentials
+                and gd.potentials[pid].char_id == char_id and gd.potentials[pid].kind != "core"]
+
+    def char_locked(self, char_id: int, state: RunState) -> bool:
+        lv = self.char_levels(char_id, state)
+        return len(lv) >= CHAR_LOCK_COUNT and sum(1 for x in lv if x < 6) >= CHAR_LOCK_UNFINISHED
+
+    def unlock_wanted(self, char_id: int, state: RunState) -> bool:
+        """0레벨 필수가 있는데 그 캐릭터의 새 잠재가 막혀 있다: 그 캐릭터 잠재를 6레벨로 올려야 한다."""
+        return (any(self.char_of.get(g.id) == char_id for g in self.missing_essentials(state))
+                and self.char_locked(char_id, state))
+
     def _tiebreak(self, card: Card) -> tuple:
-        # 점수가 같으면: 보라(rarity 1)가 금보다 덜 나오니 먼저, 그다음 프리셋의 캐릭터 순서
-        rarity = card.potential.rarity if card.potential and card.potential.rarity else 9
+        # 점수가 같으면 (사용자 규칙, 2026-10-02 영상 검토):
+        # 1) 목표 레벨을 못 채운 쪽 (섬광 발도 2→3 > 칼날의 춤사위 3→4)
+        # 2) 프리셋 캐릭터 순서 (엘레노어 > 안즈 > 레이스. 6레벨을 먼저 채워야 그 캐릭터의 새 잠재가 잘 뜬다)
+        # 3) 지금 레벨이 높은 쪽 (6레벨에 가까운 것부터)  4) 보라 (영상에선 한 번도 기준이 안 됐다)
+        p = card.potential
+        goal = self.goals.get(p.id) if p else None
+        cur = card.level_from or 0
+        below = 1 if goal and goal.mark in ("필수", "다다익선") and cur < goal.target_level else 0
         order = self.preset.priority
-        cid = self.char_of.get(card.potential.id) if card.potential else None
+        cid = p.char_id if p else None
         prio = order.index(cid) if cid in order else len(order)
-        return (-rarity, -prio)
+        rarity = p.rarity if p and p.rarity else 9
+        return (below, -prio, cur, -rarity)
+
+    def _weak(self, card: Card, state: RunState) -> bool:
+        """목표를 넘은 다다익선(목표 3) 레벨업: 집긴 하지만 리롤을 한 번 해 볼 만한 카드."""
+        goal = self.goals.get(card.potential.id) if card.potential else None
+        return bool(goal and goal.mark == "다다익선" and goal.target_level < self.w.plenty_high_min_target
+                    and (card.level_from or 0) >= goal.target_level)
 
     # -- 결정 -------------------------------------------------------------
     def missing_essentials(self, state: RunState) -> list[PotentialGoal]:
@@ -127,20 +184,30 @@ class CardChooser:
         vals = {c.slot: self.value(c, state) for c in cards}
         ok = [c for c in cards if vals[c.slot][0] is not None and vals[c.slot][0] > 0]
         values = {s: v for s, (v, _) in vals.items()}
-        missing = self.missing_essentials(state) if state.floor >= FISH_FLOOR and state.keep_after_gamble else []
+        last = state.floor >= LAST_FLOOR
+        fishing = state.floor >= FISH_FLOOR and (state.keep_after_gamble or last)
+        # 새 잠재가 막힌 캐릭터의 필수는 리롤로 못 찾는다 (그 캐릭터 잠재를 6레벨로 올리는 카드에 점수를 더 준다)
+        missing = ([g for g in self.missing_essentials(state) if not self.char_locked(self.char_of.get(g.id, -1), state)]
+                   if fishing else [])
         if missing and can_reroll:
             ids = {g.id for g in missing}
             hit = any(c.potential and c.potential.id in ids and c.level_to >= 2 for c in cards)
             # 프리셋 코어(1000점)가 떠 있으면 그냥 집는다 (13층에서 집중 속사를 리롤로 넘겼다)
             core = any((v or 0) >= SAFEGUARD_BONUS for v in values.values())
-            if not hit and not core and state.fish_this_pick < FISH_PER_PICK and state.gold >= REROLL_COST + FISH_RESERVE:
+            # 20층은 마지막이라 한 화면 횟수 제한 없이, 남길 돈 없이 (사용자: "먹을 때까지 리롤")
+            more = last or state.fish_this_pick < FISH_PER_PICK
+            money = state.gold >= REROLL_COST + (0 if last else FISH_RESERVE)
+            if not hit and not core and more and money:
                 state.fish_this_pick += 1
                 state.fish_total += 1
                 return Decision("reroll", None, f"필수 찾기 리롤 (0레벨: {', '.join(g.name for g in missing)})", values)
         if ok:
             best = max(ok, key=lambda c: (vals[c.slot][0], self._tiebreak(c)))
+            if (can_reroll and all(self._weak(c, state) for c in ok) and state.rerolls_this_pick == 0
+                    and state.gold >= REROLL_COST + WEAK_REROLL_RESERVE):
+                return Decision("reroll", None, "목표 넘은 다다익선(3)만 떠서 한 번 리롤", values)
             return Decision("pick", best, f"{best.potential.name}: {vals[best.slot][1]} +{vals[best.slot][0]:.0f}", values)
-        if state.keep_after_gamble:
+        if state.keep_after_gamble or last:
             if state.rerolls_this_pick >= MAX_REROLLS_KEEP:
                 can_reroll = False  # 아래에서 덜 나쁜 것을 고른다
         elif state.rerolls_this_pick >= MAX_REROLLS_PER_PICK:

@@ -50,8 +50,30 @@ def test_plan_buys_discounted_potions_and_keeps_reroll_money():
 def test_plan_full_price_when_rich_or_last_shop():
     items = [item(0, "잠재력 특제 음료", 200)]
     assert plan_purchases(items, 1300, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None).buy
-    assert not plan_purchases(items, 1100, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None).buy
+    assert not plan_purchases(items, 900, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None).buy
     assert plan_purchases(items, 200, shop_index=4, last_shop=True, reroll_left=0, reroll_price=None).buy
+
+
+def test_full_price_keep_by_shop():
+    # 사용자 규칙: 첫 상점 300~500원, 두 번째 적당히, 19층은 800원 이상 남긴다
+    items = [item(i, "잠재력 특제 음료", 200) for i in range(4)]
+    plan = lambda gold, idx, **kw: plan_purchases(items, gold, shop_index=idx, last_shop=False, reroll_left=0,
+                                                  reroll_price=None, **kw)
+    assert len(plan(1500, 1).buy) == 4  # 1500 -> 700
+    assert len(plan(1200, 1).buy) == 4  # 1200 -> 400
+    assert len(plan(1200, 2).buy) == 3  # 1200 -> 600 (500 남김)
+    assert len(plan(1500, 3).buy) == 3  # 1500 -> 900 (800 남김)
+    # 강화머신을 상점 뒤에 쓸 거면 그 돈(60+120+180)도 남긴다
+    assert len(plan(1500, 2, enhance_reserve=360).buy) == 3  # 1500 -> 900
+
+
+def test_full_price_after_shop_reroll():
+    # 2·4번째 상점: 할인 → 리롤 → 할인 → 200원짜리 순서. 리롤할 차례면 200원짜리는 리롤 뒤에
+    items = [item(0, "잠재력 특제 음료", 100, 200), item(1, "잠재력 특제 음료", 200)]
+    p = plan_purchases(items, 2000, shop_index=2, last_shop=False, reroll_left=1, reroll_price=100)
+    assert p.reroll and [b.slot for b in p.buy] == [0]
+    p = plan_purchases(items, 1800, shop_index=2, last_shop=False, reroll_left=0, reroll_price=100)
+    assert [b.slot for b in p.buy] == [0, 1]
 
 
 def test_plan_reroll_on_2nd_and_4th():

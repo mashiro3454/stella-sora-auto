@@ -132,6 +132,7 @@ class Bot:
         self.shop_plan = None
         self.shop_queue: list = []
         self.shop_rerolled = False
+        self.shop_bought: set[tuple[bool, int]] = set()  # (리롤 뒤인지, 칸) 이 상점에서 산 것
         self.shop_peeked = False
         self.note_needs = None  # 가방에서 읽은 협주스킬별 필요한 소리
         self.note_users = self._load_note_users()  # 소리 종류 -> 쓰는 협주스킬 수 (지난번 가방에서 읽은 것)
@@ -405,6 +406,7 @@ class Bot:
         self.shop_plan = None
         self.shop_queue = []
         self.shop_rerolled = False
+        self.shop_bought = set()
         self.shop_peeked = False
         self.trade_tick = 0
         self.floor_changed_at = time.monotonic()
@@ -531,8 +533,10 @@ class Bot:
         price = self.next_enhance_price()
         if price > ENHANCE_MAX_PRICE:
             return False
-        if self.run_tracked and not self.upgradable():
-            return False  # 가진 잠재가 전부 6레벨: 강화머신을 눌러도 카드가 안 나온다 (07:18 19층에서 두 번 헛걸음)
+        if self.run_tracked and not self.worth_enhancing():
+            # 가진 잠재가 전부 6레벨이면 강화머신을 눌러도 카드가 안 나온다 (07:18 19층에서 두 번 헛걸음).
+            # 후순위/다다익선(목표 3)/명함만뿐이어도 강화할 필요가 없다: 상점 음료부터 사서 올릴 잠재를 찾는다 (사용자 규칙)
+            return False
         gold = self.read_gold(img)
         if gold is not None and gold < price:
             # 모자라 보이면 몇 번 더 읽는다 (08:01 20층: 1821원인데 강화를 건너뛰고 상점에서 돈을 다 썼다).
@@ -549,6 +553,19 @@ class Bot:
         gd = default_gamedata()
         return [pid for pid, lv in self.run.owned.items()
                 if lv < 6 and pid in gd.potentials and gd.potentials[pid].kind != "core"]
+
+    def worth_enhancing(self) -> list[int]:
+        """강화할 만한 잠재: 6레벨이 안 된 필수와 다다익선(목표 6)."""
+        goals = self.chooser.goals
+        return [pid for pid in self.upgradable() if pid in goals and goals[pid].kind != "core"
+                and (goals[pid].mark == "필수" or (goals[pid].mark == "다다익선" and goals[pid].target_level >= 6))]
+
+    def enhance_reserve(self) -> int:
+        """상점을 먼저 들를 때 강화머신에 쓸 돈 (아직 안 누른 값들, 180원까지)."""
+        if self.enhance_count >= 90:
+            return 0  # 강화머신을 못 찾아 포기함
+        schedule = [0, 60, 120, 180] if self.shop_index == 1 else [60, 120, 180]
+        return sum(p for p in schedule[self.enhance_count:] if p <= ENHANCE_MAX_PRICE)
 
     def find_green_label(self, img: np.ndarray, word: str) -> tuple[int, int, int, int] | None:
         """초록 글자 이름표(예: 강화머신 위 "강화")의 상자."""
@@ -619,6 +636,8 @@ class Bot:
             gold = self.read_gold(img) or 0
             items = read_shop(img, self.ocr)
             for it in items:
+                if (self.shop_rerolled, it.slot) in self.shop_bought:
+                    it.sold_out = True  # 이미 산 칸 (품절 표시를 못 읽어도 다시 사지 않게)
                 if it.kind == "notes":
                     it.note_type = shop_note_type(img, it.click[0], it.click[1], it.name)
                     if self.note_needs is not None and it.note_type is not None:
@@ -627,9 +646,12 @@ class Bot:
             price, left = read_reroll(img, self.ocr)
             if self.shop_rerolled:
                 left = 0
+            # 강화머신을 아직 덜 눌렀는데 강화할 만한 잠재가 없어서 상점부터 왔다: 나중에 강화할 돈을 남긴다
+            reserve = self.enhance_reserve() if self.room == "거래" or self.run.floor == 20 else 0
             self.shop_plan = plan_purchases(items, gold, shop_index=self.shop_index, last_shop=self.run.floor >= 20,
                                             reroll_left=left, reroll_price=price,
-                                            note_have=self.note_needs.have if self.note_needs else None)
+                                            note_have=self.note_needs.have if self.note_needs else None,
+                                            enhance_reserve=reserve)
             self.shop_queue = list(self.shop_plan.buy)
             desc = ", ".join(f"{i.slot}:{i.name}({i.price}{'/' + str(i.old_price) if i.discounted else ''}"
                              f"{' 품절' if i.sold_out else ''}"
@@ -639,8 +661,13 @@ class Bot:
         if self.shop_queue:
             item = self.shop_queue.pop(0)
             self.log("상점", f"구매: {item.name} {item.price}원")
+            self.shop_bought.add((self.shop_rerolled, item.slot))
             self.gi.click(*item.click)
             time.sleep(0.8)
+            if item.kind == "potential":
+                # 음료를 사면 카드 고르기가 나오고 거기서 리롤로 돈이 바뀐다. 돌아오면 돈을 다시 읽고 다시 계획한다
+                self.shop_plan = None
+                self.shop_queue = []
             return
         if self.shop_plan.reroll and not self.shop_rerolled:
             self.shop_rerolled = True

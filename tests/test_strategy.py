@@ -191,3 +191,85 @@ def test_fish_keeps_preset_core(chooser):
     st = RunState(floor=13, gold=1100, owned=have, keep_after_gamble=True)
     d = chooser.choose(offer, st)
     assert d.action == "pick" and d.card.potential.name == core.name
+
+
+# -- 사용자 규칙 (2026-10-02 영상 검토 뒤) ------------------------------------------------
+
+def test_plenty3_late_weight(chooser):
+    # 지원 캐릭터의 다다익선(목표 3)은 13층부터 레벨당 35점: 새 Lv3(105) > 필수 +1(100) (19층 바람 장벽 > 숲속 3→4)
+    st = RunState(floor=13, owned=owned(숲속_공주의_은총=3))
+    d = chooser.choose(cards(("바람 장벽", 3), ("숲속 공주의 은총", 4, 3)), st)
+    assert d.card.potential.name == "바람 장벽"
+    # 메인(레이스)의 다다익선(목표 3)은 18층부터
+    offer = cards(("칼날의 춤사위", 3), ("숲속 공주의 은총", 4, 3))
+    assert chooser.choose(offer, RunState(floor=17)).card.potential.name == "숲속 공주의 은총"
+    assert chooser.choose(offer, RunState(floor=18)).card.potential.name == "칼날의 춤사위"
+
+
+def test_tiebreak_below_target_then_character_then_level(chooser):
+    # 목표(3) 못 채운 쪽 먼저: 섬광 발도 2→3 > 칼날의 춤사위 3→4
+    d = chooser.choose(cards(("칼날의 춤사위", 4, 3), ("섬광 발도", 3, 2)), RunState(floor=20, gold=0))
+    assert d.card.potential.name == "섬광 발도"
+    # 같은 캐릭터면 6레벨에 가까운 것: 혼란스러운 흐름 4→5 > 숲속 3→4 (영상 18층)
+    d = chooser.choose(cards(("숲속 공주의 은총", 4, 3), ("혼란스러운 흐름", 5, 4)), RunState(floor=18))
+    assert d.card.potential.name == "혼란스러운 흐름"
+    # 캐릭터 순서가 레벨보다 먼저: 전투력 증폭(엘레노어) 3→4 > 혼란스러운 흐름(안즈) 5→6, 숲속 3→4 (영상 19층 강화)
+    d = chooser.choose_enhance(cards(("숲속 공주의 은총", 4, 3), ("전투력 증폭", 4, 3), ("혼란스러운 흐름", 6, 5)),
+                               RunState(floor=19))
+    assert d.card.potential.name == "전투력 증폭"
+
+
+def test_lv2_budget_ignored_on_last_floor(chooser):
+    offer = cards(("강풍의 자태", 2), ("섬광 발도", 5, 4))
+    assert chooser.choose(offer, RunState(floor=19, gold=0, lv2_new_taken=4)).card.potential.name == "섬광 발도"
+    assert chooser.choose(offer, RunState(floor=20, gold=0, lv2_new_taken=4)).card.potential.name == "강풍의 자태"
+
+
+def test_reroll_once_when_only_plenty3_over_target(chooser):
+    offer = cards(("섬광 발도", 4, 3), ("칼날의 춤사위", 4, 3), ("과열 사격", 1))
+    st = RunState(floor=20, gold=1000, owned=all_but())
+    d = chooser.choose(offer, st)
+    assert d.action == "reroll" and "한 번" in d.reason
+    chooser.record_reroll(st)
+    assert chooser.choose(offer, st).action == "pick"
+    # 목표 못 채운 다다익선(3)이 같이 뜨면 바로 집는다
+    assert chooser.choose(cards(("섬광 발도", 3, 2), ("칼날의 춤사위", 4, 3)), RunState(floor=20, gold=1000, owned=all_but())).action == "pick"
+
+
+def all_but(*missing: str) -> dict[int, int]:
+    have = {g.id: 6 for g in CardChooser(PRESET).goals.values() if g.mark == "필수" and g.kind != "core"}
+    for m in missing:
+        have.pop(BY_NAME[m].id)
+    return have
+
+
+def test_fish_without_limit_on_last_floor(chooser):
+    # 20층: 0레벨 필수가 뜰 때까지 리롤 (650원 안 이긴 판도, 한 화면 3번 제한 없이, 남길 돈 없이)
+    offer = cards(("결전의 순간", 4, 3), ("칼날의 춤사위", 3), ("바람의 섬광", 3))
+    st = RunState(floor=20, gold=1000, owned=all_but("섬멸의 잔향"), fish_this_pick=10, rerolls_this_pick=10)
+    assert "필수 찾기" in chooser.choose(offer, st).reason
+    st.gold = 40
+    assert chooser.choose(offer, st).action == "reroll"
+    st.gold = 30
+    assert chooser.choose(offer, st).action == "pick"  # 돈이 없으면 평소대로 (재시작 안 함)
+    # Lv1로 뜨면 원칙대로 안 집고 계속 찾는다
+    st.gold = 1000
+    d = chooser.choose(cards(("결전의 순간", 4, 3), ("섬멸의 잔향", 1)), st)
+    assert d.action == "reroll"
+
+
+def test_locked_character_upgrades_instead_of_fishing(chooser):
+    # 엘레노어: 보라+금 6개, 그중 2개가 6레벨 미만 → 새 엘레노어 잠재(섬멸의 잔향)가 안 뜬다.
+    # 리롤로 찾지 않고, 엘레노어 잠재를 6레벨로 올리는 카드를 먼저 집는다
+    have = all_but("섬멸의 잔향")
+    have.update({BY_NAME["관통 탄도"].id: 4, BY_NAME["전투력 증폭"].id: 5, BY_NAME["정밀 영점 조절"].id: 6,
+                 BY_NAME["바람 정령의 공명"].id: 6, BY_NAME["동력 증압"].id: 6})
+    st = RunState(floor=20, gold=1000, owned=have)
+    assert chooser.char_locked(BY_NAME["관통 탄도"].char_id, st)
+    d = chooser.choose(cards(("결전의 순간", 5, 4), ("관통 탄도", 5, 4)), st)
+    assert d.action == "pick" and d.card.potential.name == "관통 탄도"
+    # 6레벨 미만이 하나뿐이면 안 막혀 있다: 다시 리롤로 찾는다
+    have[BY_NAME["관통 탄도"].id] = 6
+    st = RunState(floor=20, gold=1000, owned=have)
+    assert not chooser.char_locked(BY_NAME["관통 탄도"].char_id, st)
+    assert "필수 찾기" in chooser.choose(cards(("결전의 순간", 5, 4), ("전투력 증폭", 6, 5)), st).reason

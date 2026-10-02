@@ -19,6 +19,9 @@ ROWS = ((395, 280), (695, 590))  # (가격표 가운데 y, 상품 그림 y)
 TICKET_HALF_W = 95
 REROLL_PRICE_BOX = (1690, 850, 1880, 900)  # 새로고침 버튼 위 가격
 REROLL_LEFT_BOX = (1560, 930, 1790, 980)  # "남은 횟수 1"
+# 200원짜리 잠재력 음료를 살 때 상점마다 남길 돈 (사용자 규칙 2026-10-02): 첫 상점 300~500원,
+# 두 번째는 탑이 끝날 때 돈이 안 남게 적당히, 세 번째(19층)는 20층 상점용으로 800원 이상, 마지막은 다 쓴다
+FULL_PRICE_KEEP = {1: 400, 2: 500, 3: 800, 4: 0}
 
 
 @dataclass
@@ -148,7 +151,7 @@ class ShopPlan:
 
 def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_shop: bool,
                    reroll_left: int, reroll_price: int | None, reserve: int = 80,
-                   note_have: dict[int, int] | None = None) -> ShopPlan:
+                   note_have: dict[int, int] | None = None, enhance_reserve: int = 0) -> ShopPlan:
     """살 것 고르기.
 
     - 할인하는 잠재력 음료는 전부 산다.
@@ -156,14 +159,16 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
       15개 200원은 협주스킬 2개 이상이 쓰면, 5개 90원은 4개 이상이 쓰면 (단 그 소리만 40개쯤 있고
       협주스킬에 필요한 다른 소리가 20개 미만이면 안 산다). 15개 320/400원은 안 산다.
       협주스킬 필요량(users)을 못 읽었으면 45원짜리만 산다. note_have: 협주스킬에 필요한 소리별 가진 개수.
-    - 할인 상품을 다 사고도 1000원 이상 남으면 200원짜리 잠재력 음료도 산다.
-    - 마지막 상점(20층)에선 돈이 안 남게 200원짜리까지 산다.
-    - 카드 리롤용으로 reserve(기본 80원)는 남긴다 (마지막 상점 제외).
+    - 200원짜리 잠재력 음료는 상점마다 남길 돈(FULL_PRICE_KEEP)까지 산다 (사용자 규칙, 탑이 끝날 때 돈이 안 남게).
+      상점 리롤을 할 차례면 리롤 뒤에 산다 (할인 → 리롤 → 할인 → 200원짜리).
+    - 마지막 상점(20층)에선 돈이 안 남게 다 산다.
+    - 카드 리롤용으로 reserve(기본 80원)는 남긴다 (마지막 상점 제외). 강화머신을 상점 뒤에 쓸 거면
+      그 값(enhance_reserve)도 남긴다.
     - 상점 리롤은 2번째, 4번째 상점에서 할인 상품을 다 산 뒤에 한다 (남은 횟수가 있을 때).
     """
     buy: list[ShopItem] = []
     money = gold
-    keep = 0 if last_shop else reserve
+    keep = (0 if last_shop else reserve) + enhance_reserve
     avail = [i for i in items if not i.sold_out]
 
     def take(item: ShopItem) -> bool:
@@ -189,16 +194,18 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
         if it.have is not None and it.have >= 40 and any(v < 20 for v in others):
             continue  # 이 소리만 많고 다른 필요한 소리가 모자라면 정가로는 안 산다
         take(it)  # 5개 90원
-    full_potions = sorted([i for i in avail if i.kind == "potential" and not i.discounted], key=lambda i: i.price)
-    for it in full_potions:
-        if last_shop or money - it.price >= 1000:
-            take(it)
-    if last_shop:
-        # 마지막 상점: 탑이 끝나면 돈은 쓸모없다. 남은 돈으로 소리까지 다 산다 (쓰는 협주스킬이 많은 것부터)
-        rest = [i for i in avail if i not in buy and i.kind == "notes"]
-        for it in sorted(rest, key=lambda i: (-(i.users or 0), i.price)):
-            take(it)
     reroll = (shop_index in (2, 4) and reroll_left > 0 and reroll_price is not None
               and money - reroll_price >= keep)
+    if not reroll:
+        full_keep = keep if last_shop else max(keep, FULL_PRICE_KEEP.get(shop_index, 1000) + enhance_reserve)
+        full_potions = sorted([i for i in avail if i.kind == "potential" and not i.discounted], key=lambda i: i.price)
+        for it in full_potions:
+            if money - it.price >= full_keep:
+                take(it)
+        if last_shop:
+            # 마지막 상점: 탑이 끝나면 돈은 쓸모없다. 남은 돈으로 소리까지 다 산다 (쓰는 협주스킬이 많은 것부터)
+            rest = [i for i in avail if i not in buy and i.kind == "notes"]
+            for it in sorted(rest, key=lambda i: (-(i.users or 0), i.price)):
+                take(it)
     reason = f"돈 {gold} -> {money}, 살 것 {len(buy)}개" + (", 리롤" if reroll else "")
     return ShopPlan(buy, reroll, reason)
