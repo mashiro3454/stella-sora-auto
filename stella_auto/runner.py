@@ -973,6 +973,10 @@ class Bot:
                     self.log("전투", "소리 획득 -> 전투 끝")
                     if self.run_tracked:
                         self.save_state()
+                if s == "explore_done" and self.run.floor == 20:
+                    # 20층 출구는 로딩 대신 "탐색 완료"로 넘어가서 출구 자리가 한 번도 안 적혔다. 여기서 적는다
+                    # (출구를 알면 바닥 무늬를 출구로 알고 강화머신/상점 쪽으로 못 가는 일이 줄어든다)
+                    self.nav.left_by_exit()
                 self.gi.click(*EMPTY_SPOT)
                 time.sleep(0.7)
             elif s == "shop":
