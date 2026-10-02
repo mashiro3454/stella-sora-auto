@@ -109,7 +109,9 @@ class CardChooser:
             return (1000.0, "프리셋 코어") if goal else (None, "프리셋에 없는 코어")
         if goal is None or goal.mark is None:
             return None, "프리셋에 없음"
-        if not ignore_floor and state.floor < start_floor(goal):
+        if not ignore_floor and state.floor < start_floor(goal)                 and not self.char_mains_done(card.potential.char_id, state):
+            # 그 캐릭터의 필수+다다익선(6)을 다 얻었으면 층 제한을 푼다 (사용자 2026-10-03 01시:
+            # 레이스가 필수를 다 모았으면 후순위 무영 사냥꾼, 다다(3) 섬광 발도도 지금 집는 게 좋다)
             return None, f"{goal.mark}{'(목표 ' + str(goal.target_level) + ')' if goal.mark == '다다익선' else ''}은 {start_floor(goal)}층부터"
 
         # 업그레이드 카드는 카드에 적힌 "전 레벨"이 지금 레벨이다 (봇을 중간에 켜서 owned를 몰라도 맞게)
@@ -157,6 +159,15 @@ class CardChooser:
             if state.floor >= PLENTY_LOW_LATE_FLOOR[role]:
                 w = PLENTY_LOW_LATE
         return w
+
+    def char_mains_done(self, char_id: int | None, state: RunState) -> bool:
+        """이 캐릭터의 필수/다다익선(목표 6)을 전부 얻었는지 (레벨 1이라도)."""
+        for g in self.goals.values():
+            if g.kind == "core" or self.char_of.get(g.id) != char_id:
+                continue
+            if (g.mark == "필수" or (g.mark == "다다익선" and g.target_level >= self.w.plenty_high_min_target))                     and state.owned.get(g.id, 0) == 0:
+                return False
+        return True
 
     # -- 캐릭터별 새 잠재 막힘 (사용자 설명) ------------------------------------------
     @staticmethod

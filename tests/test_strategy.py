@@ -432,3 +432,19 @@ def test_no_fishing_on_faced_drink_screen(chooser):
     # 엘레노어 얼굴 음료면 엘레노어 필수를 그대로 찾는다
     d = chooser.choose(offer, RunState(floor=19, gold=1500, owned=dict(have), keep_after_gamble=True), pool_char=137)
     assert d.action == "reroll" and "필수 찾기" in d.reason
+
+
+def test_low_priority_early_when_char_mains_done(chooser):
+    # 사용자 2026-10-03 01시: 캐릭터의 필수+다다익선(6)을 다 얻었으면 후순위/명함만/다다(3)의
+    # 층 제한(19층/13층)을 그 캐릭터에 한해 푼다
+    race_done = owned(드높은_기개=6, 결전의_순간=5, 강풍의_자태=4)  # 레이스 필수1+다다(6) 2개
+    st = RunState(floor=10, gold=1000, owned=dict(race_done))
+    d = chooser.choose(cards(("무영 사냥꾼", 2), ("과열 사격", 3)), st)
+    assert d.action == "pick" and d.card.potential.name == "무영 사냥꾼"  # 후순위인데 10층에 집음
+    d = chooser.choose(cards(("섬광 발도", 3), ("과열 사격", 3)), st)
+    assert d.action == "pick" and d.card.potential.name == "섬광 발도"  # 다다(3) 새 Lv3도
+    # 필수가 하나라도 0레벨이면 예전 그대로 (19층/13층부터)
+    st2 = RunState(floor=10, gold=1000, owned=owned(결전의_순간=5, 강풍의_자태=4))
+    assert chooser.choose(cards(("무영 사냥꾼", 2), ("과열 사격", 3)), st2).action == "reroll"
+    # 다른 캐릭터(엘레노어)의 후순위는 안 풀린다
+    assert chooser.choose(cards(("정밀 영점 조절", 2), ("과열 사격", 3)), st).action == "reroll"
