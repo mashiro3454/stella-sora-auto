@@ -121,6 +121,7 @@ def is_loading(gray: np.ndarray) -> bool:
 class ScreenDetector:
     def __init__(self, template_dir: Path = TEMPLATE_DIR):
         self.templates: dict[str, np.ndarray] = {}
+        self._half: dict[str, np.ndarray] = {}  # 넓은 영역용 반 크기 조각
         for a in ANCHORS:
             path = template_dir / f"{a.name}.png"
             if path.exists():
@@ -133,8 +134,27 @@ class ScreenDetector:
         out = {}
         for name, tmpl in self.templates.items():
             x0, y0, x1, y1 = ANCHOR_BY_NAME[name].search_box()
-            out[name] = float(cv2.matchTemplate(gray[y0:y1, x0:x1], tmpl, cv2.TM_CCOEFF_NORMED).max())
+            out[name] = self._match(gray[y0:y1, x0:x1], name, tmpl)
         return out
+
+    def _match(self, region: np.ndarray, name: str, tmpl: np.ndarray) -> float:
+        """기준 조각 점수. 찾을 영역이 넓으면(팝업) 반으로 줄여 자리를 찾고 원본 크기로 다시 확인한다.
+        팝업 3개가 화면 판정 시간의 2/3를 먹어서 (영역 1200x680 × 3번) 두 단계로 나눴다 (56ms -> 22ms)."""
+        if region.size < 200_000:
+            return float(cv2.matchTemplate(region, tmpl, cv2.TM_CCOEFF_NORMED).max())
+        half = self._half.get(name)
+        if half is None:
+            half = self._half[name] = cv2.resize(tmpl, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+        small = cv2.resize(region, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+        _, _, _, loc = cv2.minMaxLoc(cv2.matchTemplate(small, half, cv2.TM_CCOEFF_NORMED))
+        # 반 크기에서 찾은 자리 주변만 원본 크기로 다시 (오차 ±16px 여유)
+        x, y = loc[0] * 2, loc[1] * 2
+        th, tw = tmpl.shape
+        y0, y1 = max(0, y - 16), min(region.shape[0], y + th + 16)
+        x0, x1 = max(0, x - 16), min(region.shape[1], x + tw + 16)
+        if y1 - y0 < th or x1 - x0 < tw:
+            return float(cv2.matchTemplate(region, tmpl, cv2.TM_CCOEFF_NORMED).max())
+        return float(cv2.matchTemplate(region[y0:y1, x0:x1], tmpl, cv2.TM_CCOEFF_NORMED).max())
 
     def detect(self, img: np.ndarray) -> Detection:
         gray = _gray(img)

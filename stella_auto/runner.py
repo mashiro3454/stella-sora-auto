@@ -24,7 +24,7 @@ from rapidfuzz import fuzz, process
 
 from . import navigate as nv
 from .capture import capture, ensure_client_size, find_game_window, restore
-from .cards import read_cards, team_pool
+from .cards import CARD_AREA, read_cards, team_pool
 from .choices import find_option_boxes, read_choices
 from .shop import plan_purchases, read_reroll, read_shop
 from .notes import NOTE_NAMES, read_needs, shop_note_type, type_from_name
@@ -122,6 +122,8 @@ class Bot:
         self.npc_scanned = 0.0
         self._card_tries = 0
         self._last_cards: tuple | None = None  # 직전에 읽은 카드 (두 번 연속 같아야 고른다)
+        self._card_prev: np.ndarray | None = None  # 카드 멈춤 판정용 직전 화면 조각
+        self._card_wait_since = 0.0
         self._last_choice_bands: tuple | None = None
         self._declined: str | None = None  # ESC로 안 고르고 나간 선택지 질문
         self._quiz_waits = 0
@@ -166,11 +168,22 @@ class Bot:
         self.log_path = log_dir / f"run_{stamp}.jsonl"
         self.shot_dir = log_dir / "shots" / stamp
         self.shot_dir.mkdir(parents=True, exist_ok=True)
+        self._prune_shots(log_dir / "shots", keep_days=3)
         gd = default_gamedata()
         # NPC 이름표로 착각하면 안 되는 글자: 전투 중 뜨는 스킬 이름, 잠재력 이름
         self.not_npc = [n.replace(" ", "") for n in gd.skill_names] + [p.name.replace(" ", "") for p in gd.potentials.values() if p.name] \
             + list(BOSS_NAMES)
         self.choice_path = log_dir / "choices.jsonl"
+
+    @staticmethod
+    def _prune_shots(shots: Path, keep_days: int) -> None:
+        """오래된 판단 화면 폴더를 지운다 (디버그용 스냅샷일 뿐인데 하루 수백 MB씩 쌓여 OneDrive가 전부 올린다)."""
+        cutoff = time.strftime("%Y%m%d", time.localtime(time.time() - keep_days * 86400))
+        for d in shots.glob("20*"):
+            if d.is_dir() and d.name[:8] < cutoff:
+                for f in d.iterdir():
+                    f.unlink(missing_ok=True)
+                d.rmdir()
 
     # -- 기본 ---------------------------------------------------------------
     def check_stop(self) -> None:
@@ -284,7 +297,25 @@ class Bot:
         return int(nums[-1]) if nums else None
 
     # -- 화면별 행동 -----------------------------------------------------------
+    def cards_settled(self, img: np.ndarray) -> bool:
+        """카드가 날아 들어오는 중인지: 카드 자리를 직전 화면과 비교한다 (OCR보다 30배 싸다).
+        멈춘 화면끼리는 차이 3~4 (카드 반짝임), 움직이는 중엔 10~80 (영상 측정)."""
+        x0, y0, x1, y1 = CARD_AREA
+        g = cv2.resize(cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY), (204, 100),
+                       interpolation=cv2.INTER_AREA).astype(np.int16)
+        prev, self._card_prev = self._card_prev, g
+        if prev is None:
+            self._card_wait_since = time.monotonic()
+            return False
+        if float(np.abs(g - prev).mean()) < 6.0:
+            return True
+        # 반짝임이 심해서 3초 넘게 안 멈춘 걸로 보이면, 예전처럼 두 번 읽어 똑같은지로 판단한다
+        return time.monotonic() - self._card_wait_since > 3.0
+
     def on_cards(self, img: np.ndarray, enhance: bool) -> None:
+        if not self.cards_settled(img):
+            time.sleep(0.15)
+            return
         gold = self.read_gold(img)
         if gold is not None:
             self.run.gold = gold
@@ -301,15 +332,16 @@ class Bot:
             self.log("카드", "카드를 못 읽음, 잠깐 기다림")
             time.sleep(0.5)
             return
-        # 카드가 날아 들어오는 중에 읽으면 이름과 레벨 줄이 다른 카드끼리 섞인다.
-        # 0.3초 간격으로 두 번 읽어서 똑같을 때만 고른다.
-        sig = tuple((c.slot, c.potential.id if c.potential else c.raw_name, c.level_from, c.level_to, c.bonus)
-                    for c in cards)
-        if sig != self._last_cards:
-            self._last_cards = sig
-            time.sleep(0.3)
-            return
+        # 멈춘 걸 확인 못 하고 3초가 지나 온 경우만 (반짝임 등): 예전처럼 두 번 읽어 똑같을 때만 고른다
+        if time.monotonic() - self._card_wait_since > 3.0:
+            sig = tuple((c.slot, c.potential.id if c.potential else c.raw_name, c.level_from, c.level_to, c.bonus)
+                        for c in cards)
+            if sig != self._last_cards:
+                self._last_cards = sig
+                time.sleep(0.3)
+                return
         self._last_cards = None
+        self._card_prev = None  # 행동하고 나면 (카드가 바뀌니) 멈춤 판정을 처음부터
         d = self.chooser.choose_enhance(cards, self.run) if enhance else self.chooser.choose(cards, self.run)
         if not self.run_tracked and (d.action == "restart" or (d.action == "reroll" and
                                                                (not self.floor_known or self.run.rerolls_this_pick >= 2))):
@@ -339,7 +371,7 @@ class Bot:
             self.gi.click(*cards[0].click)
             time.sleep(0.35)
             self.gi.key("space")
-        time.sleep(0.8)
+        time.sleep(0.4)  # 나머지 기다림은 화면 판정(연속 3번 일치)과 카드 멈춤 판정이 맡는다
 
     def on_choice(self, img: np.ndarray) -> None:
         # 보기 상자는 미끄러져 들어온다. 상자 위치가 두 번 연속 같을 때 읽는다
@@ -445,6 +477,7 @@ class Bot:
         self.exit_seen_at = None
         self.exit_fails = 0
         self._last_cards = None
+        self._card_prev = None
         self.room = room
         self.talked = set()
         self.talk_spots: list = []  # 이 층에서 F로 말을 건 자리들
@@ -605,10 +638,12 @@ class Bot:
         return None
 
     def save_full(self, img: np.ndarray, tag: str) -> None:
-        """나중에 소리 그림/이름 짝을 만들 자료: 원본 크기 화면을 logs/shop_data/에."""
+        """나중에 소리 그림/이름 짝을 만들 자료: 원본 크기 화면을 logs/shop_data/에.
+        png는 한 장에 1.4MB라 (OneDrive가 전부 올린다) 거의 같은 화질의 jpg로 바꿨다 (~150KB)."""
         d = self.log_path.parent / "shop_data"
         d.mkdir(parents=True, exist_ok=True)
-        cv2.imencode(".png", img)[1].tofile(str(d / f"{time.strftime('%m%d_%H%M%S')}_{self.run.floor:02d}_{tag}.png"))
+        cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tofile(
+            str(d / f"{time.strftime('%m%d_%H%M%S')}_{self.run.floor:02d}_{tag}.jpg"))
 
     def _note_users_file(self) -> Path:
         return self.log_dir / "note_users.json"
