@@ -49,7 +49,7 @@ EMPTY_SPOT = (1300, 1045)  # "빈 곳을 터치" 화면에서 누를 곳. 가운
 GAMBLE_LAST_FLOOR = 3  # 650원 도박은 1~3층에서만 나온다
 TITLE_BOX = (600, 40, 1320, 230)  # 방에 들어가면 잠깐 뜨는 "선택의 방 / 2/20층"
 # "14/20층". OCR이 "/"를 "1"로 읽기도 한다 ("14120층")
-TITLE_FLOOR_RE = re.compile(r"(\d{1,2})\s*[/1lI|]\s*20\s*층|(\d{1,2})\s*/\s*20")
+TITLE_FLOOR_RE = re.compile(r"(\d{1,2})\s*[/1lI|!\:;?]\s*20\s*층|(\d{1,2})\s*/\s*20")  # OCR이 /를 !?로도 읽는다 (00:26 "5!20층")
 ROOM_NAMES = ("전투", "선택", "강적", "거래", "리더")
 HUD_TEXT = ("기록점수", "점수", "자동전투", "전투중", "레벨", "레멜", "레텔", "간단히", "대화", "코인", "소리")
 NPC_SCAN_EVERY = 2.5  # 초. 이름표 찾기(OCR 전체 화면)는 무거워서 가끔만
@@ -463,7 +463,9 @@ class Bot:
             self.saw_loading()
         return st != "field" or (talk and nv.find_talk_prompt(im) is not None)
 
-    def new_floor(self, floor: int, room: str) -> None:
+    def new_floor(self, floor: int, room: str, confirmed: bool = False) -> None:
+        """confirmed: 층 번호를 제목/지도에서 직접 읽었는지. 로딩을 세어 정한 층이면 False
+        (00:26: 지도를 못 읽고 1층부터 세다가 가짜 3층에서 650원 재시작을 눌러 실제 7층 판을 버렸다)."""
         room = ROOM_BY_FLOOR.get(floor, "") or room  # OCR로 읽은 방 이름보다 층 구성표를 믿는다
         self.combat_done = room not in COMBAT_ROOMS
         self.combat_done_at = None
@@ -485,8 +487,8 @@ class Bot:
         self.floor_changed_at = time.monotonic()
         self.loading_at = None
         restore = self.floor_uncertain
-        if self.floor_uncertain and floor <= GAMBLE_LAST_FLOOR:
-            self.run_tracked = True  # 층을 몰랐다가 1~3층으로 밝혀짐: 650원 도박 규칙을 다시 쓴다
+        if self.floor_uncertain and confirmed and floor <= GAMBLE_LAST_FLOOR:
+            self.run_tracked = True  # 층을 몰랐다가 제목/지도로 1~3층이 확인됨: 650원 도박 규칙을 다시 쓴다
         self.run.floor = floor
         self.floor_known = True
         if self.step_mode and self.gamble_won and not self.step_pause_sec:
@@ -545,7 +547,7 @@ class Bot:
                 floor = self.run.floor + 1
         if floor != self.run.floor or (room and not self.room):
             changed = floor != self.run.floor
-            self.new_floor(floor, room or self.room)
+            self.new_floor(floor, room or self.room, confirmed=True)
             return changed
         return False
 
@@ -1670,7 +1672,7 @@ class Bot:
             self.gi.key("esc")
             time.sleep(0.6)
             if m:
-                self.new_floor(int(m.group(1) or m.group(2)), next((r for r in ROOM_NAMES if r in text), ""))
+                self.new_floor(int(m.group(1) or m.group(2)), next((r for r in ROOM_NAMES if r in text), ""), confirmed=True)
                 self.joined_midway = True  # 이 층 전투가 이미 끝났을 수 있다
                 # 1~2층이면 판 시작이나 다름없다: 650원 도박/리롤 규칙을 그대로 쓴다 (빠진 잠재는 한두 장)
                 self.run_tracked = self.run.floor <= 2
