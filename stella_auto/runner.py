@@ -362,7 +362,10 @@ class Bot:
             d = type(d)("pick", best, "중간에 켠 판이라 재시작/리롤 대신 가장 나은 카드", vals)
         desc = [f"{c.potential.name if c.potential else c.raw_name}({'새' if c.is_new else c.level_from}>{c.level_to})"
                 f"={d.values.get(c.slot)}" for c in cards]
-        self.log("카드", f"{'강화 ' if enhance else ''}{d.action} {d.reason} | {', '.join(desc)} | 돈 {self.run.gold}", img)
+        counts = (f"+2 {self.run.plus2_taken}/{strategy.PLUS2_PER_RUN}" if enhance
+                  else f"새Lv3 {self.run.lv3_new_taken}/{strategy.LV3_LIMIT}")
+        self.log("카드", f"{'강화 ' if enhance else ''}{d.action} {d.reason} | {', '.join(desc)}"
+                       f" | 돈 {self.run.gold} | {counts}", img)
         if self.step_pause_sec:
             time.sleep(1.0)  # 지켜보기 모드: 사용자가 제시된 카드를 볼 틈을 준다
         if d.action == "pick":

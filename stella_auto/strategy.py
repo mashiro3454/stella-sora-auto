@@ -280,13 +280,26 @@ class CardChooser:
         scored = [(self.value(c, state, ignore_floor=True)[0] or 0.0, c) for c in cards]
         values = {c.slot: v for v, c in scored}
 
+        plus2_screen = any(c.level_from is not None and c.gain >= 2 for c in cards)
+
         def strands(c: Card) -> bool:
             goal = self.goals.get(c.potential.id) if c.potential else None
             main_high = goal and (goal.mark == "필수" or (goal.mark == "다다익선"
                                                           and goal.target_level >= self.w.plenty_high_min_target))
             return bool(main_high and c.level_to == 5 and state.plus2_taken < PLUS2_PER_RUN)
 
-        best = max(scored, key=lambda t: (t[0], not strands(t[1]), self._tiebreak(t[1])))[1]
+        def wasteful(c: Card) -> bool:
+            # +2가 명함만/후순위/프리셋 밖 카드에 꽂히는 건 낭비, 다다익선(목표 3)은 13층 전까지 낭비
+            # (사용자 2026-10-03). 낭비끼리만 남으면 그나마 점수 높은 것
+            if not plus2_screen:
+                return False
+            goal = self.goals.get(c.potential.id) if c.potential else None
+            if goal is None or goal.mark in (None, "후순위", "명함만"):
+                return True
+            return bool(goal.mark == "다다익선" and goal.target_level < self.w.plenty_high_min_target
+                        and state.floor < FISH_FLOOR)
+
+        best = max(scored, key=lambda t: (not wasteful(t[1]), t[0], not strands(t[1]), self._tiebreak(t[1])))[1]
         return Decision("pick", best, f"강화: {best.potential.name if best.potential else '?'}", values)
 
     def record_pick(self, card: Card, state: RunState) -> None:

@@ -389,3 +389,18 @@ def test_defer_enhance_when_all_at_5(chooser):
     b.run.plus2_taken = 0
     b.run.owned[BY_NAME["관통 탄도"].id] = 4
     assert not b.defer_enhance_for_plus2()  # 4레벨짜리가 있으면 +2를 받을 수 있다
+
+
+def test_plus2_not_into_plenty3_before_13(chooser):
+    # 사용자 2026-10-03: 13층 전에는 다다익선(3)에 +2가 꽂히는 것도 낭비
+    offer = cards(("칼날의 춤사위", 4, 2), ("섬멸의 잔향", 6, 5))
+    st = RunState(floor=5, owned=owned(칼날의_춤사위=2, 섬멸의_잔향=5))
+    d = chooser.choose_enhance(offer, st)
+    assert d.card.potential.name == "섬멸의 잔향"  # 60점이어도 칼날(다다3) 대신 필수 5→6
+    # 13층부터는 다다익선(3)도 +2를 받아도 된다 (후순위보다 먼저)
+    offer2 = cards(("칼날의 춤사위", 4, 2), ("무영 사냥꾼", 5, 3))
+    d = chooser.choose_enhance(offer2, RunState(floor=13, owned=owned(칼날의_춤사위=2, 무영_사냥꾼=3)))
+    assert d.card.potential.name == "칼날의 춤사위"
+    # 13층 전엔 낭비끼리면 그나마 점수 높은 것 (칼날 > 후순위)
+    d = chooser.choose_enhance(offer2, RunState(floor=5, owned=owned(칼날의_춤사위=2, 무영_사냥꾼=3)))
+    assert d.card.potential.name == "칼날의 춤사위"
