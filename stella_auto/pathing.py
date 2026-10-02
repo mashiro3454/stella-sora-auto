@@ -363,7 +363,9 @@ class Navigator:
                 char = nv.find_character(img)
                 if char is None:
                     lost += 1
-                    if lost >= 6:
+                    # 카메라가 캐릭터를 따라가니 못 찾아도 화면 가운데로 보고 걷는다 (17층: 체력바를 못 읽어
+                    # 6번 만에 "lost"로 그만두기를 1분 넘게 되풀이했다). 아주 오래 못 찾을 때만 그만둔다
+                    if lost >= 150:
                         return NavResult("lost", now - t0)
                 else:
                     lost = 0

@@ -56,6 +56,9 @@ def find_character(img: np.ndarray) -> tuple[float, float] | None:
     green = ((hsv[..., 0] > 35) & (hsv[..., 0] < 85) & (hsv[..., 1] > 120) & (hsv[..., 2] > 150)).astype(np.uint8)
     empty = ((hsv[..., 0] > 100) & (hsv[..., 0] < 130) & (hsv[..., 1] > 15) & (hsv[..., 1] < 70)
              & (hsv[..., 2] > 70) & (hsv[..., 2] < 115)).astype(np.uint8)
+    # 체력이 아주 적으면 빈 칸이 어두운 빨강이 된다 (17층: 초록 1칸 + 빨강 3칸 남짓, 1분 동안 캐릭터를 못 찾음)
+    empty |= (((hsv[..., 0] >= 170) | (hsv[..., 0] <= 4)) & (hsv[..., 1] > 80) & (hsv[..., 1] < 160)
+              & (hsv[..., 2] > 60) & (hsv[..., 2] < 120)).astype(np.uint8)
 
     def segs(mask: np.ndarray, max_w: int) -> list:
         n, _, st, _ = cv2.connectedComponentsWithStats(mask)
