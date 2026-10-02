@@ -1442,7 +1442,8 @@ class Bot:
             elif s in ("team_setup", "record_combo"):
                 self.gi.click(*BTN_NEXT)
                 departed = departed or s == "record_combo"
-            elif s in ("npc_choice", "dialog", "shop", "shop_buy"):
+            elif s in ("npc_choice", "dialog", "shop", "shop_buy", "bag", "record_detail", "record_manage", "filter"):
+                # 가방/기록 화면이 열린 채 봇이 켜졌을 때도 ESC로 닫는다 (23:10: 가방에서 40번 제자리걸음)
                 self.gi.key("esc")
             elif s in ("card_select", "enhance_select"):
                 self.gi.key("space")
