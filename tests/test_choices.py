@@ -247,3 +247,15 @@ def test_gamble_gold_leading_one_dropped():
     # 13:34: 1130을 "130"으로 읽었다
     assert _judge(480, [130, 130, 130])[0] is True
     assert _judge(480, [280, 280, 280])[0] is False
+
+
+def test_buy_notes_is_not_selling_notes():
+    # 19:18 1층: "150 소모, 랜덤 소리 5개 획득"(돈 내고 소리)을 "소리 팔고 150원"으로 알고 골랐다.
+    # 사용자: 50% 확률로 소리 5개 받는 2번째 보기
+    opts = [("잘들어.", "1500 소모, 랜덤 소리 5개 획득"),
+            ("편하게 들어 주』.", "0% 확률로 HP 30% 회복, 50% 확률로 랜덤 소리 5개 획득")]
+    idx, rule = choose_option(opts, 1, "이 음악을 다 듣고 나면...... 생각지 못한 걸 얻게 될지도 모른답니 다.")
+    assert idx == 1, rule
+    # 진짜 소리 팔기는 그대로
+    sell = [("코인으로 바꿔줘", "랜덤 소리 5개 소모, 1500 획득"), ("됐어", "300 획득")]
+    assert choose_option(sell, 5, "") == (0, "소리 팔고 150원")

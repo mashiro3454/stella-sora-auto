@@ -1612,8 +1612,10 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
         if "33%" in s and "잠재력" in s and "HP" not in s:
             return i, "33% 잠재력"
     for i, s in enumerate(texts):
-        # "코인으로 바꿔줘 / 랜덤 소리 5개 소모, 150 획득" 처럼 "판다"는 말이 없을 때도 있다
-        if "소리" in s and "150" in s and ("팔" in s or "판매" in s or ("소모" in s and "획득" in s)):
+        # "코인으로 바꿔줘 / 랜덤 소리 5개 소모, 150 획득" 처럼 "판다"는 말이 없을 때도 있다.
+        # 소리를 내고(소모) 돈을 받는(획득) 쪽만. "150 소모, 랜덤 소리 5개 획득"(돈 내고 소리 사기)과 헷갈렸다 (19:18 1층)
+        sell = re.search(r"소리[^,]*소모", s) and not re.search(r"150\s*0?\s*소모", s)
+        if "소리" in s and "150" in s and ("팔" in s or "판매" in s or sell):
             return i, "소리 팔고 150원"
     if thirty and any("소리" in e and "소모" in e and ("90" in e or "140" in e) for e in effects):
         return thirty[0], "소리 사지 말고 30원"
