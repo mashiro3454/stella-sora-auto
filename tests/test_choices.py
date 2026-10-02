@@ -30,7 +30,7 @@ def test_user_choice_rules_2026_10_02():
     mirror = [("거울아 거울아...... 부디", "0 또는 잠재력 랜덤 변화 발생!"), ("안 대, 너무 위험해 보여.•", "300 획득")]
     assert choose_option(mirror, 15)[0] == 0  # 3번: 모든 층
     potion = [("해보지 뭐!", "1득, 33% 확률로 HP 20% 회복, 33% 확률로 HP 30% 소실"), ("다음에!", "300 획득")]
-    assert choose_option(potion, 2)[0] == 1  # 4번: 30원
+    assert choose_option(potion, 2)[0] == 0  # 4번: 시약 쪽 (사용자 2026-10-02 21시에 30원에서 바꿈)
     favor = [("비즈니스는 비즈니스!", "1000 소모, 1개의 랜덤 잠재력 획득 I"),
              ("좋은 물건 좀 선물해", "% 확률로 HP 30% 회복, 50% 확률로 랜덤 잠재력 1개 획득")]
     assert choose_option(favor, 3)[0] == 1 and choose_option(favor, 9)[0] == 1  # 11번: 모든 층 호의
@@ -259,3 +259,9 @@ def test_buy_notes_is_not_selling_notes():
     # 진짜 소리 팔기는 그대로
     sell = [("코인으로 바꿔줘", "랜덤 소리 5개 소모, 1500 획득"), ("됐어", "300 획득")]
     assert choose_option(sell, 5, "") == (0, "소리 팔고 150원")
+
+
+def test_reagent_drinks_instead_of_thirty():
+    # 시약 (4번): 사용자 2026-10-02 21시 "항상 2번(30원) 고르지 말고 1번(시약)을 골라"
+    opts = [("해보지 뭐!", "1득, 33% 확률로 HP 20% 회복, 33% 확률로 HP 30% 소실"), ("다음에!", "300 획득!")]
+    assert choose_option(opts, 3, "아직 무슨 효과가 있는지 모르는 시약인데, 테스트해 몰래요?") == (0, "시약 마시기 (4번)")

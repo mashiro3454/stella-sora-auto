@@ -1662,8 +1662,10 @@ def choose_option(options: list[tuple[str, str]], floor: int, question: str = ""
         if floor <= 6 or not thirty:
             return i, "돈·HP 랜덤 변화 = 100원 쪽 (2번, 6층 이하)"
         return thirty[0], "30원 (2번, 7층 이상)"
-    if thirty and any("소실" in e for e in effects):
-        return thirty[0], "시약은 30원 (4번)"
+    trial = [i for i, e in enumerate(effects) if "소실" in e and "소모" not in e]
+    if trial:
+        # 시약 (4번): 사용자 2026-10-02 21시 "항상 2번(30원) 고르지 말고 1번(시약) 골라"
+        return trial[0], "시약 마시기 (4번)"
     for i, e in enumerate(effects):
         if "회복" in e and "확률" in e and ("잠재력" in e or "소리" in e) and "소모" not in e:
             return i, "호의: 50% 잠재력/소리 (10~12번)"
