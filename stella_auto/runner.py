@@ -80,6 +80,9 @@ LOBBY_BUTTONS = {
     "enter_tower": (1420, 900),  # 탑 고르기 화면 "별의 탑 들어가기"
 }
 TOWER_NAME = "불꽃과 먼지"  # 바람 프리셋 탑 (물/바람 속성이 유리한 탑)
+TOWER_PANEL_NAME = (1060, 700, 1400, 770)  # 탑 고르는 화면 오른쪽 사진 아래 고른 탑 이름
+TOWER_TITLE_BOX = (680, 215, 1060, 280)  # 출발(난이도) 화면 정보 칸 맨 위 탑 이름
+BTN_BACK = (97, 60)  # 왼쪽 위 뒤로
 
 
 class Stop(Exception):
@@ -1030,7 +1033,14 @@ class Bot:
             box = next((l.box for l in lines if fuzz.ratio(l.text.replace(" ", ""), want) >= 70 and l.box[0] < 960), None)
             if box:
                 self.gi.click(box[0] + box[2] // 2, box[1] + box[3] // 2)
-                time.sleep(1.0)
+                time.sleep(1.2)
+            # 고른 탑이 맞는지 오른쪽 사진 아래 이름으로 확인하고서 들어간다
+            # (11:27: 고르는 클릭이 안 먹어서 전에 골라져 있던 물과 그림자 탑으로 들어갔다)
+            chosen = self.ocr.text(self.grab(), TOWER_PANEL_NAME).replace(" ", "")
+            if fuzz.partial_ratio(want, chosen) < 70:
+                self.log("메뉴", f"고른 탑이 {chosen!r}라서 아직 안 들어감 ({TOWER_NAME}을 다시 고름)")
+                time.sleep(0.5)
+                return step
             self.gi.click(*LOBBY_BUTTONS["enter_tower"])
         else:
             self.gi.click(*LOBBY_BUTTONS[step])
@@ -1099,6 +1109,13 @@ class Bot:
                     # 사람이(또는 Claude가) 메뉴에서 할 일이 있을 때: logs/pause_at_menu 파일을 만들어 두면 여기서 멈춘다
                     (self.log_path.parent / "pause_at_menu").unlink(missing_ok=True)
                     raise Stop("출발 화면에서 멈춤 요청 (logs/pause_at_menu)")
+                tower = self.ocr.text(img, TOWER_TITLE_BOX).replace(" ", "")
+                if fuzz.partial_ratio(TOWER_NAME.replace(" ", ""), tower) < 70:
+                    # 다른 탑의 출발 화면이다 (11:27 물과 그림자 탑으로 출발했다): 뒤로 가서 탑을 다시 고른다
+                    self.log("메뉴", f"출발 화면의 탑이 {tower!r}라서 뒤로 가서 {TOWER_NAME}을 고름", img)
+                    self.gi.click(*BTN_BACK)
+                    time.sleep(1.5)
+                    continue
                 self.gi.click(*BTN_DEPART)
             elif s in ("team_setup", "record_combo"):
                 self.gi.click(*BTN_NEXT)

@@ -187,3 +187,26 @@ def test_free_notes_single_user_note_with_40_goes_random():
             ("나의 길을 인도해.", "랜덤 소리 5개 획득")]
     assert choose_option(opts, 2, note_users=users, note_have={4: 39})[0] == 1
     assert choose_option(opts, 2, note_users=users, note_have={4: 40})[0] == 2
+
+
+def test_tower_name_checks():
+    # 11:27: 고른 탑을 확인하지 않고 들어가 물과 그림자 탑을 돌았다
+    from pathlib import Path
+
+    import cv2
+    import numpy as np
+    from rapidfuzz import fuzz
+
+    from stella_auto.ocr import KoreanOcr
+    from stella_auto.runner import TOWER_NAME, TOWER_PANEL_NAME, TOWER_TITLE_BOX
+    ocr = KoreanOcr()
+    d = Path(__file__).parent / "screens"
+    want = TOWER_NAME.replace(" ", "")
+
+    def score(name, box):
+        img = cv2.imdecode(np.fromfile(str(d / name), np.uint8), cv2.IMREAD_COLOR)
+        return fuzz.partial_ratio(want, ocr.text(img, box).replace(" ", ""))
+
+    assert score("unknown__lobby_towers.jpg", TOWER_PANEL_NAME) >= 70  # 불꽃과 먼지가 골라져 있음
+    assert score("unknown__lobby_towers_other.jpg", TOWER_PANEL_NAME) < 70  # 물과 그림자가 골라져 있음
+    assert score("difficulty_select__live_other_tower.jpg", TOWER_TITLE_BOX) < 70
