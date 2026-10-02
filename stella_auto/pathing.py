@@ -306,7 +306,11 @@ class Navigator:
         """이 지도에서 두 번 넘게 나가 본 출구가 있는데, 새로 본 문양이 거기서 멀면 무늬일 가능성이 크다."""
         if self.memory_exit is None or self.room is None or self.room.exit_count < 2:
             return False
-        return math.hypot(w[0] - self.memory_exit[0], w[1] - self.memory_exit[1]) > exit_tolerance(self.memory_exit)
+        if math.hypot(w[0] - self.memory_exit[0], w[1] - self.memory_exit[1]) <= exit_tolerance(self.memory_exit):
+            return False
+        # 두 번 넘게 나가 본 다른 출구 근처면 믿는다 (출구가 둘인 방)
+        return not any(n >= 2 and math.hypot(w[0] - c[0], w[1] - c[1]) <= exit_tolerance(c)
+                       for c, n in self.memory.exit_clusters(self.room))
 
     def _is_false_door(self, w: tuple[float, float]) -> bool:
         return any(math.hypot(w[0] - f[0], w[1] - f[1]) < 200 for f in self.false_doors)

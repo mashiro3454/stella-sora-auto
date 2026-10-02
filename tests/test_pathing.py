@@ -304,3 +304,14 @@ def test_near_exit_only_when_heading_to_it(tmp_path, monkeypatch):
     img = world.grab()
     assert nav._exit_too_close(img, (960, 555), pos, (pos[0] + 500, pos[1]))  # 문 쪽으로 감
     assert not nav._exit_too_close(img, (960, 555), pos, (pos[0] - 500, pos[1]))  # 반대쪽
+
+
+def test_exit_clusters_two_exits(tmp_path):
+    # r0012: 출구가 둘인 방. 두 번 넘게 나간 묶음은 각각 믿는다
+    mem = RoomMemory(tmp_path)
+    img = np.random.default_rng(4).integers(0, 255, (1080, 1920, 3), dtype=np.uint8)
+    r = mem.add("강적", 4, img)
+    r.exits = [[1883, -352], [1812, -311], [2637, -472], [1949, -536], [2700, -520], [1852, -398]]
+    cl = mem.exit_clusters(r)
+    assert cl[0][1] == 4 and cl[1][1] == 2
+    assert abs(cl[1][0][0] - 2668) < 5

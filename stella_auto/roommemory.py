@@ -128,6 +128,23 @@ class RoomMemory:
         self.save()
 
     @staticmethod
+    def exit_clusters(r: Room) -> list[tuple[tuple[float, float], int]]:
+        """최근 나간 자리들을 가까운 것끼리 묶은 것 [(가운데, 개수)], 많은 순.
+        출구가 둘인 방이 있다 (4·8·11·15층 r0012: 1900,-400 근처와 2650,-500 근처)."""
+        groups: list[list[list]] = []
+        for p in r.exits:
+            for g in groups:
+                cx = sum(q[0] for q in g) / len(g)
+                cy = sum(q[1] for q in g) / len(g)
+                if math.hypot(p[0] - cx, p[1] - cy) < exit_tolerance((cx, cy)):
+                    g.append(p)
+                    break
+            else:
+                groups.append([p])
+        out = [((sum(q[0] for q in g) / len(g), sum(q[1] for q in g) / len(g)), len(g)) for g in groups]
+        return sorted(out, key=lambda t: -t[1])
+
+    @staticmethod
     def exit_scattered(r: Room) -> bool:
         """최근에 나간 자리들이 서로 멀다: 이 지도에선 위치 재기가 흔들려서 (계단 등) 출구 기억을 믿을 수 없다.
         (r0012: 4·8·11·15층에 나오는 계단 방. 나간 자리가 1000px 넘게 흩어져 기억한 출구로 헤맸다)"""
