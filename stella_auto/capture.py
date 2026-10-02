@@ -199,6 +199,22 @@ def restore(win: GameWindow, timeout: float = 5.0) -> GameWindow:
     raise RuntimeError("게임 창을 되살리지 못함")
 
 
+def ensure_client_size(win: GameWindow, width: int = 1920, height: int = 1080) -> GameWindow:
+    """게임 창 안쪽을 width x height로 맞춘다 (위치는 그대로). 봇의 좌표는 1920x1080 기준이다.
+    (2026-10-02 11시: 사용자가 녹화하다 창이 1920x1057로 바뀌어 봇이 시작을 못 했다)"""
+    if win.width == width and win.height == height:
+        return win
+    wrect = wintypes.RECT()
+    user32.GetWindowRect(win.hwnd, ctypes.byref(wrect))
+    extra_w = (wrect.right - wrect.left) - win.width
+    extra_h = (wrect.bottom - wrect.top) - win.height
+    swp_nomove, swp_nozorder, swp_noactivate = 0x2, 0x4, 0x10
+    user32.SetWindowPos(win.hwnd, 0, 0, 0, width + extra_w, height + extra_h,
+                        swp_nomove | swp_nozorder | swp_noactivate)
+    time.sleep(1.5)  # 게임이 새 크기로 다시 그릴 시간
+    return describe(win.hwnd)
+
+
 def capture(win: GameWindow, method: str = "printwindow") -> np.ndarray:
     """게임 클라이언트 영역을 BGR 이미지로 돌려준다."""
     if win.minimized:

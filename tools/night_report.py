@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def main(path: str) -> None:
-    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
     starts = sum("새 판 1층" in l for l in lines)
     done = sum("판째 끝" in l for l in lines)
     gamble = sum("(650원 도박)" in l for l in lines)
@@ -33,7 +33,7 @@ def main(path: str) -> None:
     led = ROOT / "logs" / "records.jsonl"
     if led.exists():
         print("저장한 기록:")
-        for l in led.read_text(encoding="utf-8").splitlines():
+        for l in led.read_text(encoding="utf-8", errors="replace").splitlines():
             r = json.loads(l)
             print(f"  {r['saved_at']} {r['name']}: 평점 {r['record_level']}, 점수 {r['score']}"
                   f"{' (버릴 조건: ' + ', '.join(r['discard_reasons']) + ')' if r['discard_reasons'] else ''}"

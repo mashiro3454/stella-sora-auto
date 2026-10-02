@@ -158,3 +158,25 @@ def test_fallback_never_takes_main_lv1(chooser):
     st = RunState(floor=6, gold=0, rerolls_this_pick=8, keep_after_gamble=True)
     d = chooser.choose(bad, st)
     assert d.action == "pick" and d.card.potential.name != "관통 탄도"
+
+
+def test_fish_for_missing_essential(chooser):
+    # 시험: 13층부터 0레벨 필수가 있으면 그 카드가 Lv2 이상으로 뜰 때까지 한 화면에서 리롤 3번까지
+    have_all_but_one = {g.id: 3 for g in chooser.goals.values() if g.mark == "필수" and g.kind != "core"}
+    missing = BY_NAME["섬멸의 잔향"].id
+    have_all_but_one.pop(missing)
+    offer = cards(("결전의 순간", 4, 3), ("칼날의 춤사위", 3), ("바람의 섬광", 3))
+    st = RunState(floor=14, gold=1000, owned=dict(have_all_but_one), keep_after_gamble=True)
+    for _ in range(3):
+        d = chooser.choose(offer, st)
+        assert d.action == "reroll" and "필수 찾기" in d.reason
+        chooser.record_reroll(st)
+    assert chooser.choose(offer, st).action == "pick"  # 3번 하면 평소대로
+    # 그 필수가 Lv2 이상으로 뜨면 바로 집는다
+    st2 = RunState(floor=14, gold=1000, owned=dict(have_all_but_one), keep_after_gamble=True)
+    d = chooser.choose(cards(("결전의 순간", 4, 3), ("섬멸의 잔향", 2), ("바람의 섬광", 3)), st2)
+    assert d.action == "pick" and d.card.potential.name == "섬멸의 잔향"
+    # 12층, 돈 부족, 이기지 않은 판에선 안 함
+    for st3 in (RunState(floor=12, gold=1000, owned=dict(have_all_but_one), keep_after_gamble=True),
+                RunState(floor=14, gold=200, owned=dict(have_all_but_one), keep_after_gamble=True)):
+        assert "필수 찾기" not in chooser.choose(offer, st3).reason

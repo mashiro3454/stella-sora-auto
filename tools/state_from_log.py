@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def main(log: str, preset: str = "presets/바람.json") -> None:
-    lines = Path(log).read_text(encoding="utf-8").splitlines()
+    lines = Path(log).read_text(encoding="utf-8", errors="replace").splitlines()
     start = max(i for i, l in enumerate(lines) if "새 판 1층" in l)
     run = lines[start:]
     gd = default_gamedata()

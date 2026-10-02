@@ -178,3 +178,12 @@ def test_gamble_gold_trailing_zero_dropped():
     # 09:17: 280을 "28"로 읽어 결과를 몰랐다 (카드 화면에서 다시 확인해 진 것으로 바로잡음)
     assert _judge(480, [28, 28, 28])[0] is False
     assert _judge(480, [113, 113, 113])[0] is True
+
+
+def test_free_notes_single_user_note_with_40_goes_random():
+    # 사용자 규칙: 협주 1개만 쓰는 소리는 이미 40개 이상 있으면 랜덤 소리
+    users = {8: 6, 6: 3, 0: 3, 1: 2, 4: 1}
+    opts = [("나를 일깨워 주.", "체력의 소리 5개 획득"), ("나를 일깨워 주!", "집중의 소리 5개 획득"),
+            ("나의 길을 인도해.", "랜덤 소리 5개 획득")]
+    assert choose_option(opts, 2, note_users=users, note_have={4: 39})[0] == 1
+    assert choose_option(opts, 2, note_users=users, note_have={4: 40})[0] == 2

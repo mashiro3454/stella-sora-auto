@@ -21,6 +21,11 @@ EARLY_FLOOR = 6
 ESSENTIAL_SAFEGUARD_FLOOR = 13  # 이 층부터 아직 없는 필수는 Lv2 이상이면 먼저 집는다
 SAFEGUARD_BONUS = 1000
 CARD_ONLY_VALUE = 50  # 명함만: 1레벨이라도 있으면 되는 것
+# 시험 (2026-10-02 사용자: "테스트해보는건 어때"): 13층부터 아직 0레벨인 필수가 있으면 그 카드가 뜰 때까지 리롤을 더 쓴다.
+# 필수가 0레벨이면 기록은 어차피 버려지니 돈을 아낄 까닭이 적다. 카드 한 장에 그 필수가 뜰 확률은 1~3%.
+FISH_FLOOR = 13
+FISH_PER_PICK = 3  # 한 선택 화면에서 필수 찾기 리롤은 이만큼까지 (그다음엔 평소대로 고른다)
+FISH_RESERVE = 200  # 이만큼은 남긴다
 
 
 @dataclass
@@ -35,6 +40,8 @@ class RunState:
     # 시험 (2026-10-02 밤): 650원 도박에 이긴 판은 리롤 횟수로 재시작하지 않는다. 이긴 판 둘이 6층에서
     # "리롤 10번", "한 선택에서 리롤 5번"으로 끝났다 (리롤 대상은 프리셋에 없거나 13/19층부터인 카드였다)
     keep_after_gamble: bool = False
+    fish_this_pick: int = 0  # 이번 선택 화면에서 필수 찾기로 한 리롤
+    fish_total: int = 0  # 이번 판 필수 찾기 리롤 (시험 기록용)
 
 
 @dataclass
@@ -112,10 +119,22 @@ class CardChooser:
         return (-rarity, -prio)
 
     # -- 결정 -------------------------------------------------------------
+    def missing_essentials(self, state: RunState) -> list[PotentialGoal]:
+        """아직 0레벨인 필수 (이게 하나라도 있으면 기록은 버릴 조건)."""
+        return [g for g in self.goals.values() if g.kind != "core" and g.mark == "필수" and state.owned.get(g.id, 0) == 0]
+
     def choose(self, cards: list[Card], state: RunState, *, can_reroll: bool = True) -> Decision:
         vals = {c.slot: self.value(c, state) for c in cards}
         ok = [c for c in cards if vals[c.slot][0] is not None and vals[c.slot][0] > 0]
         values = {s: v for s, (v, _) in vals.items()}
+        missing = self.missing_essentials(state) if state.floor >= FISH_FLOOR and state.keep_after_gamble else []
+        if missing and can_reroll:
+            ids = {g.id for g in missing}
+            hit = any(c.potential and c.potential.id in ids and c.level_to >= 2 for c in cards)
+            if not hit and state.fish_this_pick < FISH_PER_PICK and state.gold >= REROLL_COST + FISH_RESERVE:
+                state.fish_this_pick += 1
+                state.fish_total += 1
+                return Decision("reroll", None, f"필수 찾기 리롤 (0레벨: {', '.join(g.name for g in missing)})", values)
         if ok:
             best = max(ok, key=lambda c: (vals[c.slot][0], self._tiebreak(c)))
             return Decision("pick", best, f"{best.potential.name}: {vals[best.slot][1]} +{vals[best.slot][0]:.0f}", values)
@@ -156,6 +175,7 @@ class CardChooser:
                 state.lv2_new_taken += 1
         state.owned[card.potential.id] = max(state.owned.get(card.potential.id, 0), card.level_to)
         state.rerolls_this_pick = 0
+        state.fish_this_pick = 0
 
     def record_reroll(self, state: RunState) -> None:
         state.rerolls_this_pick += 1

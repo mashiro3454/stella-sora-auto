@@ -23,7 +23,7 @@ import numpy as np
 from rapidfuzz import fuzz, process
 
 from . import navigate as nv
-from .capture import capture, find_game_window, restore
+from .capture import capture, ensure_client_size, find_game_window, restore
 from .cards import read_cards, team_pool
 from .choices import find_option_boxes, read_choices
 from .shop import plan_purchases, read_reroll, read_shop
@@ -163,6 +163,9 @@ class Bot:
             raise Stop("게임 창이 없음")
         if win.minimized:
             win = restore(win)
+        if (win.width, win.height) != (1920, 1080):
+            self.log("화면", f"게임 창 크기가 {win.width}x{win.height}라서 1920x1080으로 맞춤")
+            win = ensure_client_size(win)
         return capture(win)
 
     def shot(self, img: np.ndarray, tag: str) -> str:
@@ -509,6 +512,8 @@ class Bot:
         price = self.next_enhance_price()
         if price > ENHANCE_MAX_PRICE:
             return False
+        if self.run_tracked and not self.upgradable():
+            return False  # 가진 잠재가 전부 6레벨: 강화머신을 눌러도 카드가 안 나온다 (07:18 19층에서 두 번 헛걸음)
         gold = self.read_gold(img)
         if gold is not None and gold < price:
             # 모자라 보이면 몇 번 더 읽는다 (08:01 20층: 1821원인데 강화를 건너뛰고 상점에서 돈을 다 썼다).
@@ -519,6 +524,12 @@ class Bot:
                 self._enh_gold_check = (now, self.read_gold_steady(3))
             gold = self._enh_gold_check[1]
         return gold is None or gold >= price
+
+    def upgradable(self) -> list[int]:
+        """강화머신이 올려 줄 수 있는 잠재: 가진 것 중 코어가 아니고 6레벨이 안 된 것."""
+        gd = default_gamedata()
+        return [pid for pid, lv in self.run.owned.items()
+                if lv < 6 and pid in gd.potentials and gd.potentials[pid].kind != "core"]
 
     def find_green_label(self, img: np.ndarray, word: str) -> tuple[int, int, int, int] | None:
         """초록 글자 이름표(예: 강화머신 위 "강화")의 상자."""
@@ -1121,6 +1132,10 @@ class Bot:
             potential_levels=dict(self.run.owned), ensemble_levels=[v or 0 for v in ensemble], notes={},
             record_level=level or 0))
         pots = {gd.potentials[pid].name if pid in gd.potentials else str(pid): lv for pid, lv in self.run.owned.items()}
+        if self.run_tracked and result.discard_reasons:
+            # 사용자 규칙 (2026-10-02 11시): 필수가 0레벨인 조건 미달 도자기는 저장하지 않고 바로 깬다
+            self.discard_record(img, level, ensemble, pots, result)
+            return
         # 3) 이름 바꾸기
         renamed = self.rename_record(name)
         # 4) 기록 저장 → "기록 저장 성공" → 확인
@@ -1145,6 +1160,31 @@ class Bot:
         self.log("기록", f"저장 {rec.name}: 평점 {level}, 협주 {ensemble}, 점수 {rec.score}"
                          f"{' (버릴 조건: ' + ', '.join(result.discard_reasons) + ')' if result.discard_reasons else ''}"
                          f"{'' if self.run_tracked else ' (중간에 켠 판이라 잠재 레벨이 빠져 있음)'}", img)
+        self.run_tracked = False
+        time.sleep(1.5)
+
+    def discard_record(self, img: np.ndarray, level, ensemble, pots: dict, result) -> None:
+        """기록 화면에서 휴지통(분해) → "분해" 안내 → 확인. 장부에는 분해했다고 적는다."""
+        self.gi.click(*BTN_TRASH)
+        done = False
+        for _ in range(8):
+            time.sleep(0.8)
+            im = self.grab()
+            if self.det.detect(im).state == "notice":
+                text = self.ocr.text(im, (300, 250, 1620, 750)).replace(" ", "")
+                if "분해" in text:
+                    self.gi.click(*BTN_CONFIRM)
+                    done = True
+                    break
+                self.log("기록", f"분해 안내가 예상과 다름: {text!r} (멈춤)", im)
+                raise Stop(f"기록 분해 중 모르는 안내: {text}")
+        rec = rc.SavedRecord(name="(분해)", saved_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+                             floor_reached=self.run.floor, record_level=level, ensemble_levels=ensemble,
+                             potentials=pots, score=round(result.total), discard_reasons=result.discard_reasons,
+                             tracked=self.run_tracked, note="조건 미달이라 분해" if done else "분해 안내를 못 봄")
+        rc.append_ledger(self.log_path.parent / "records.jsonl", rec)
+        self.log("기록", f"분해 (조건 미달: {', '.join(result.discard_reasons)}): 평점 {level}, 협주 {ensemble}, "
+                         f"점수 {rec.score}{'' if done else ' - 분해 안내를 못 봄'}", img)
         self.run_tracked = False
         time.sleep(1.5)
 
@@ -1451,7 +1491,8 @@ def lobby_action(t: str) -> str | None:
 def free_note_choice(texts: list[str], note_users: dict[int, int] | None,
                      loss: tuple[str, ...], note_have: dict[int, int] | None = None) -> tuple[int, str] | None:
     """보기가 전부 공짜 소리 ("강공의 소리 5개 획득 / 행운의 소리 5개 획득 / 랜덤 소리 5개 획득"):
-    우리 협주스킬이 가장 많이 쓰는 소리, 같으면 덜 가진 소리, 쓰는 소리가 없으면 랜덤 (시험, 2026-10-02 밤).
+    우리 협주스킬이 쓰는 소리 (많이 쓰는 것, 같으면 덜 가진 것), 쓰는 소리가 없으면 랜덤 (사용자 규칙 2026-10-02).
+    협주 1개만 쓰는 소리는 이미 40개 이상 있으면 랜덤이 낫다 (사용자 규칙).
     전엔 첫 번째를 골라서 안 쓰는 폭발의 소리를 받았다."""
     have = note_have or {}
     if not note_users or len(texts) < 2:
@@ -1461,7 +1502,8 @@ def free_note_choice(texts: list[str], note_users: dict[int, int] | None,
         if "소리" not in s or "획득" not in s or any(w in s for w in loss):
             return None
         kinds.append((i, type_from_name(s), "랜덤" in s))
-    named = [(note_users.get(t, 0), -have.get(t, 0), -i, i) for i, t, rnd in kinds if t is not None and not rnd]
+    named = [(note_users.get(t, 0), -have.get(t, 0), -i, i) for i, t, rnd in kinds
+             if t is not None and not rnd and not (note_users.get(t, 0) == 1 and have.get(t, 0) >= 40)]
     if named and max(named)[0] > 0:
         n, _, _, i = max(named)
         return i, f"공짜 소리: 협주 {n}개가 쓰는 {NOTE_NAMES[kinds[i][1]]}"

@@ -21,7 +21,7 @@ LINE = re.compile(r"(r\d{4}) 출구 자리 기억 \((-?\d+), (-?\d+)\)")
 def main(log: str) -> None:
     mem = RoomMemory()
     seen: dict[str, list[list[int]]] = {}
-    for line in Path(log).read_text(encoding="utf-8").splitlines():
+    for line in Path(log).read_text(encoding="utf-8", errors="replace").splitlines():
         m = LINE.search(line)
         if m and m.group(1) in mem.rooms:
             seen.setdefault(m.group(1), []).append([int(m.group(2)), int(m.group(3))])
