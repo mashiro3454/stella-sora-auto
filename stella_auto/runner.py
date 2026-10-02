@@ -80,6 +80,7 @@ LOBBY_BUTTONS = {
     "enter_tower": (1420, 900),  # 탑 고르기 화면 "별의 탑 들어가기"
 }
 TOWER_NAME = "불꽃과 먼지"  # 바람 프리셋 탑 (물/바람 속성이 유리한 탑)
+BOSS_NAMES = ("광기의요리사",)  # 20층 보스 이름 (화면 위에 떠서 NPC 이름표로 잘못 읽었다)
 TOWER_PANEL_NAME = (1060, 700, 1400, 770)  # 탑 고르는 화면 오른쪽 사진 아래 고른 탑 이름
 TOWER_TITLE_BOX = (680, 215, 1060, 280)  # 출발(난이도) 화면 정보 칸 맨 위 탑 이름
 BTN_BACK = (97, 60)  # 왼쪽 위 뒤로
@@ -107,6 +108,7 @@ class Bot:
         self.char_missing_since: float | None = None
         self.room = ""  # 이 층 방 종류 (전투/선택/강적/거래/리더)
         self.talked: set[str] = set()  # 이 층에서 말 건 NPC 이름
+        self.talk_spots: list = []  # 이 층에서 F로 말을 건 자리들
         self.title_seen = 0.0  # 방 제목을 마지막으로 본 때
         self.title_checked = 0.0
         self.npc_scanned = 0.0
@@ -152,7 +154,8 @@ class Bot:
         self.shot_dir.mkdir(parents=True, exist_ok=True)
         gd = default_gamedata()
         # NPC 이름표로 착각하면 안 되는 글자: 전투 중 뜨는 스킬 이름, 잠재력 이름
-        self.not_npc = [n.replace(" ", "") for n in gd.skill_names] + [p.name.replace(" ", "") for p in gd.potentials.values() if p.name]
+        self.not_npc = [n.replace(" ", "") for n in gd.skill_names] + [p.name.replace(" ", "") for p in gd.potentials.values() if p.name] \
+            + list(BOSS_NAMES)
         self.choice_path = log_dir / "choices.jsonl"
 
     # -- 기본 ---------------------------------------------------------------
@@ -405,6 +408,7 @@ class Bot:
         self._last_cards = None
         self.room = room
         self.talked = set()
+        self.talk_spots: list = []  # 이 층에서 F로 말을 건 자리들
         self.idle_since = None
         self.spots_tried: set = set()
         self.log("층", f"{floor}층 {room + '의 방' if room else ''}")
@@ -715,9 +719,14 @@ class Bot:
         # 1) "F 대화"가 떠 있으면, 아직 말 안 건 NPC면 말을 건다 (거래의 방에선 상점이 열린다)
         if prompt == "talk" and now - self.last_talk_at > TALK_COOLDOWN:
             name = self.nearest_label(img, char)
-            # 이름을 못 읽었는데 이 층에서 이미 누군가와 이야기했다면, 대개 방금 그 NPC다
-            if not self.already_talked(name) and not (name == "?" and self.talked):
+            # 이름을 못 읽었는데 이 층에서 바로 이 근처에서 말을 걸었다면, 대개 방금 그 NPC다
+            # (전엔 "말 건 목록"이 비어 있지만 않으면 건너뛰어서, 보스 이름을 목록에 넣은 20층에서 상점을 놓쳤다)
+            here = self.nav.last_pos
+            near_last = here is not None and any(math.hypot(here[0] - p[0], here[1] - p[1]) < 250 for p in self.talk_spots)
+            if not self.already_talked(name) and not (name == "?" and near_last):
                 self.talked.add(name)
+                if here is not None:
+                    self.talk_spots.append(here)
                 self.last_talk_at = now
                 self.log("NPC", f"{name}에게 F로 말 걸기", img)
                 self.gi.key("f")
