@@ -1705,12 +1705,18 @@ class Bot:
             # 지금 층 표시("2/20층 선택의 방")는 지도에서 지금 방 옆에 붙어서 아래쪽 끝에 있기도 하다
             text = self.ocr.text(img, (560, 40, 1880, 1075)).replace(" ", "")
             m = TITLE_FLOOR_RE.search(text)
-            if not m:
+            floor_read = int(m.group(1) or m.group(2)) if m else None
+            if floor_read is None and "마왕의방" in text:
+                # 20층 보스방은 지도에 "마왕의 방"으로 나온다: 층 숫자를 못 읽어도 20층 확정
+                # (01:37: 층을 몰라서 마지막 상점을 안 들르고 돈을 남긴 채 나갔다)
+                floor_read = 20
+                self.log("층", "지도의 '마왕의 방'으로 20층 확정")
+            if floor_read is None:
                 self.log("층", f"지도 글자에서 층을 못 찾음: {text[:60]!r} ({attempt + 1}/3)", img)
             self.gi.key("esc")
             time.sleep(0.6)
-            if m:
-                self.new_floor(int(m.group(1) or m.group(2)), next((r for r in ROOM_NAMES if r in text), ""), confirmed=True)
+            if floor_read is not None:
+                self.new_floor(floor_read, next((r for r in ROOM_NAMES if r in text), ""), confirmed=True)
                 self.joined_midway = True  # 이 층 전투가 이미 끝났을 수 있다
                 # 1~2층이면 판 시작이나 다름없다: 650원 도박/리롤 규칙을 그대로 쓴다 (빠진 잠재는 한두 장)
                 self.run_tracked = self.run.floor <= 2
