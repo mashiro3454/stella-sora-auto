@@ -396,8 +396,9 @@ class Bot:
             time.sleep(0.5)
             return
         self._single_waits = 0
-        if is_quiz(question) and quiz_answer(question, pairs) is None and self._quiz_waits < 8:
-            # 정답지에 있는 퀴즈인데 정답 보기가 아직 안 보인다: 보기가 하나씩 나타나는 중이다
+        quizish = is_quiz(question) or any("정답" in e or "정담" in e for _, e in pairs)
+        if quizish and quiz_answer(question, pairs) is None and self._quiz_waits < 8:
+            # 퀴즈인데 정답 보기가 아직 안 보인다: 보기가 하나씩 나타나는 중이다
             # (보기 하나만 읽고 틀린 답을 고른 일이 있었다)
             self._quiz_waits += 1
             time.sleep(0.5)
@@ -1699,12 +1700,26 @@ def quiz_answer(question: str, options: list[tuple[str, str]]) -> int | None:
     if not q:
         return None
     m = process.extractOne(q, _QUIZ_KEYS, scorer=fuzz.ratio, score_cutoff=75)
-    if not m:
+    if m:
+        answer = _QUIZ_ANSWERS[m[2]].replace(" ", "")
+        scores = [fuzz.ratio(t.replace(" ", ""), answer) for t, _ in options]
+        best = max(range(len(options)), key=lambda i: scores[i])
+        return best if scores[best] >= 60 else None
+    # 같은 퀴즈가 말투만 다르게 나와 질문이 덜 비슷할 때 (22:42 10층: "한번 맞혀봐...... 난 어떤 여행자와의
+    # 대화를 더 좋아할까?"가 "맞혀보시죠...... 저는 어떤 여행가와..."로 나와 71 < 75):
+    # 보상 글 "정답을 선택하면 ..."이 퀴즈라는 표시니까, 보기 중에 정답지의 답이 있으면 그걸 고른다
+    if not any("정답" in e or "정담" in e for _, e in options):
         return None
-    answer = _QUIZ_ANSWERS[m[2]].replace(" ", "")
-    scores = [fuzz.ratio(t.replace(" ", ""), answer) for t, _ in options]
-    best = max(range(len(options)), key=lambda i: scores[i])
-    return best if scores[best] >= 60 else None
+    flat = [a.replace(" ", "") for a in _QUIZ_ANSWERS]
+    hits = []  # (보기 번호, 정답지 번호)
+    for i, (t, _) in enumerate(options):
+        a = process.extractOne(t.replace(" ", ""), flat, scorer=fuzz.ratio, score_cutoff=75)
+        if a:
+            hits.append((i, a[2]))
+    if not hits:
+        return None
+    # 정답지의 답이 여럿 보이면 (여행자/여행가 퀴즈는 답이 다르다) 질문이 더 비슷한 쪽
+    return max(hits, key=lambda h: fuzz.ratio(q, _QUIZ_KEYS[h[1]]))[0]
 
 
 def choose_option(options: list[tuple[str, str]], floor: int, question: str = "",
