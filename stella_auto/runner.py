@@ -33,6 +33,7 @@ from . import killswitch
 from .input import GameInput, NotFocusedError, release_all_keys
 from .ocr import KoreanOcr
 from . import record as rc
+from .recorder import Recorder
 from .score import RecordResult, score_record
 from .pathing import Goal, Navigator
 from .preset import Preset
