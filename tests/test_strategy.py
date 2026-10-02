@@ -76,7 +76,14 @@ def test_never_lv1_for_main(chooser):
 
 def test_low_priority_only_from_19(chooser):
     assert chooser.choose(cards(("가속 돌파", 1)), RunState(floor=18, gold=100)).action == "reroll"
-    d = chooser.choose(cards(("가속 돌파", 1)), RunState(floor=19))
+    # 사용자 2026-10-03 01시: 후순위 새 Lv1은 19층이어도 그 캐릭터의 필수·다다(6)을 다 모았을 때만
+    assert chooser.choose(cards(("가속 돌파", 1)), RunState(floor=19, gold=100)).action == "reroll"
+    anzu_done = owned(파멸의_질풍=6, 숲속_공주의_은총=5, 혼란스러운_흐름=5, 바람_장벽=3)
+    d = chooser.choose(cards(("가속 돌파", 1)), RunState(floor=19, owned=anzu_done))
+    assert d.action == "pick"
+    # 다다익선(3)의 새 Lv1도 같은 조건
+    assert chooser.choose(cards(("바람 장벽", 1)), RunState(floor=19, gold=100)).action == "reroll"
+    d = chooser.choose(cards(("바람 장벽", 1)), RunState(floor=19, owned=owned(파멸의_질풍=6, 숲속_공주의_은총=5, 혼란스러운_흐름=5)))
     assert d.action == "pick"
 
 
@@ -423,8 +430,8 @@ def test_no_fishing_on_faced_drink_screen(chooser):
     # 얼굴 음료 화면(pool_char)에선 그 캐릭터의 필수를 찾는 게 아니면 필수 찾기를 끈다
     have = all_but("관통 탄도", "섬멸의 잔향")  # 엘레노어 필수 2개가 0레벨
     offer = cards(("칼날의 춤사위", 5, 4), ("무영 사냥꾼", 1), ("과열 사격", 3))
-    st = RunState(floor=19, gold=1500, owned=dict(have), keep_after_gamble=True)
-    d = chooser.choose(offer, st, pool_char=143)  # 레이스 음료
+    st = RunState(floor=19, gold=1500, owned=dict(have), keep_after_gamble=True, rerolls_this_pick=1)
+    d = chooser.choose(offer, st, pool_char=143)  # 레이스 음료: 엘레노어 필수 찾기를 안 한다
     assert d.action == "pick" and d.card.potential.name == "칼날의 춤사위"
     # 민무늬 음료(또는 일반 레벨업)에선 그대로 찾는다
     d = chooser.choose(offer, st)

@@ -119,13 +119,20 @@ class CardChooser:
         main = goal.mark in ("필수", "다다익선")
         safeguard = goal.mark == "필수" and cur == 0 and state.floor >= ESSENTIAL_SAFEGUARD_FLOOR
         if card.is_new and not ignore_floor:
-            if card.level_to <= 1 and main:
-                return None, "Lv1은 안 집음"
+            plenty_low = goal.mark == "다다익선" and goal.target_level < self.w.plenty_high_min_target
+            if card.level_to <= 1:
+                if main and not plenty_low:
+                    return None, "Lv1은 안 집음"
+                # 후순위/다다익선(3)의 새 Lv1은 그 캐릭터의 필수+다다(6)을 다 모았거나 잠재락일 때만
+                # (사용자 2026-10-03 01시. 아니면 리롤하거나 Lv2 이상만)
+                if goal.mark in ("후순위",) or plenty_low:
+                    cid = card.potential.char_id
+                    if not (self.char_mains_done(cid, state) or self.char_locked(cid, state)):
+                        return None, "Lv1은 필수·다다(6) 다 모은 캐릭터만"
             # 20층(마지막 층)엔 아낄 까닭이 없다 (영상: 20층 강풍의 자태 새 Lv2 → 상점 음료로 Lv6)
             if (card.level_to == 2 and main and not safeguard and state.lv2_new_taken >= self.lv2_budget
                     and state.floor < LAST_FLOOR):
                 return None, f"Lv2 예산({self.lv2_budget}) 다 씀"
-            plenty_low = goal.mark == "다다익선" and goal.target_level < self.w.plenty_high_min_target
             if (card.level_to >= 3 and (not main or plenty_low)
                     and LV3_LIMIT - state.lv3_new_taken <= self._unacquired_main(state)):
                 return None, "Lv3 횟수는 필수/다다익선(6)용으로 남겨 둠"

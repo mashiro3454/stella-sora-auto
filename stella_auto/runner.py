@@ -379,6 +379,14 @@ class Bot:
                 self.run.plus2_taken += 1  # +2 강화 화면 (판에 5번뿐)
             if not enhance:
                 self.card_pool_char = None  # 음료 카드 화면이 끝났다
+            g = self.chooser.goals.get(d.card.potential.id) if d.card.potential else None
+            if (d.card.is_new and d.card.level_to <= 1 and g
+                    and (g.mark == "후순위" or (g.mark == "다다익선" and g.target_level < 6))):
+                # 후순위/다다(3) 새 Lv1을 예외(필수·다다(6) 완집 or 잠재락)로 집었다: 화면을 남긴다 (사용자 확인용)
+                dd = self.log_path.parent / "choice_alerts"
+                dd.mkdir(parents=True, exist_ok=True)
+                cv2.imencode(".png", img)[1].tofile(str(dd / f"{time.strftime('%m%d_%H%M%S')}_{self.run.floor:02d}_lv1pick.png"))
+                self.log("카드", f"(알림) 후순위/다다(3) 새 Lv1 {d.card.potential.name}을 예외로 집음 — 화면 남김")
             self.chooser.record_pick(d.card, self.run)
             if self.run_tracked:
                 self.save_state()
