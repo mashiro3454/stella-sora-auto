@@ -567,6 +567,40 @@ class Bot:
             out.append((t, l.box, fuzz.ratio(kind, "상점") >= 50))
         return out
 
+    def green_tag_npcs(self, img: np.ndarray, char: tuple[float, float]) -> list[tuple[str, tuple[int, int, int, int], bool]]:
+        """이름표 OCR이 통째로 실패할 때 (22:03 1층: 베아트리스를 지나침): NPC 머리 위 초록
+        딱지("사건"/"회복"/"상점")를 색 덩어리로 찾고, 그 조각만 따로 OCR해서 확인한다
+        (전체 화면은 못 읽어도 조각은 읽힌다). 돌려주는 모양은 npc_labels와 같다."""
+        hsv = cv2.cvtColor(img[:960], cv2.COLOR_BGR2HSV)
+        mask = ((hsv[..., 0] > 35) & (hsv[..., 0] < 75) & (hsv[..., 1] > 70) & (hsv[..., 2] > 110)).astype(np.uint8)
+        for x0, y0, x1, y1 in ((0, 0, 420, 200), (1350, 0, 1920, 230), (1450, 800, 1920, 960), (780, 930, 1150, 960)):
+            mask[y0:y1, x0:x1] = 0  # HUD
+        cx, cy = int(char[0]), int(char[1])
+        mask[max(0, cy - 20):cy + 90, max(0, cx - 150):cx + 150] = 0  # 캐릭터 체력바(같은 초록)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 11), np.uint8))
+        n, _, st, _ = cv2.connectedComponentsWithStats(mask)
+        out = []
+        for i in range(1, n):
+            x, y, w, h, area = st[i]
+            if not (14 <= h <= 36 and 28 <= w <= 120 and area >= 140):
+                continue
+            crop = img[max(0, y - 8):min(960, y + h + 8), max(0, x - 10):min(1920, x + w + 10)]
+            big = cv2.copyMakeBorder(cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC),
+                                     40, 40, 40, 40, cv2.BORDER_REPLICATE)  # 테두리가 있어야 작은 조각이 읽힌다
+            tag = re.sub(r"[^가-힣]", "", self.ocr.text(big, None, 1.0))
+            m = process.extractOne(tag, ("사건", "회복", "상점"), scorer=fuzz.ratio)
+            if not m or m[1] < 50:
+                continue
+            # 딱지 아래쪽에서 흰 이름을 읽어 본다 (못 읽으면 "?" — 가서 F를 눌러 보면 된다)
+            name = "?"
+            for l in self.ocr.read(img, (max(0, x + w // 2 - 180), y + h, min(1920, x + w // 2 + 180), min(960, y + h + 190))):
+                t = re.sub(r"[^가-힣]", "", l.text)
+                if 2 <= len(t) <= 6 and not is_green_text(img, l.box) and white_fraction(img, l.box) >= 0.08:
+                    name = t
+                    break
+            out.append((name, (x, y, w, h), m[0] == "상점"))
+        return out
+
     def already_talked(self, name: str) -> bool:
         """OCR이 같은 이름을 "베르너/베트너/베드너"처럼 다르게 읽어서, 비슷하면 같은 NPC로 친다."""
         return any(fuzz.ratio(name, t) >= 60 for t in self.talked if t != "?")
@@ -884,6 +918,9 @@ class Bot:
             self.npc_scanned = now
             shop_ok = self.has_shop() and not self.shop_done and not self.want_enhance(img)
             todo = [lb for lb in self.npc_labels(img) if not self.already_talked(lb[0]) and (not lb[2] or shop_ok)]
+            if not todo:  # 이름표 OCR이 실패했을 수 있다: 초록 딱지를 색으로 찾는다
+                todo = [lb for lb in self.green_tag_npcs(img, char)
+                        if not self.already_talked(lb[0]) and (not lb[2] or shop_ok)]
             if todo:
                 name, box, _ = min(todo, key=lambda lb: abs(lb[1][0] - char[0]) + abs(lb[1][1] - char[1]))
                 x, y, w, h = box
