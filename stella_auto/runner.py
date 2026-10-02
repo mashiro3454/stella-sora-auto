@@ -614,6 +614,13 @@ class Bot:
             out.append((name, (x, y, w, h), m[0] == "상점"))
         return out
 
+    def near_talk_spot(self, box: tuple[int, int, int, int]) -> bool:
+        """이름표가 이번 층에서 이미 말 건 자리 근처인지. 이름을 "?"로 읽고 말 걸면 목록에 안 남아서,
+        나중에 이름을 제대로 읽으면 같은 NPC에게 또 간다 (23:52 2층 베르주)."""
+        x, y, w, h = box
+        wx, wy = self.nav.odo.to_world((x + w / 2, y + h / 2))
+        return any(math.hypot(wx - sx, wy - sy) < 250 for sx, sy in self.talk_spots)
+
     def near_shop_spot(self, box: tuple[int, int, int, int]) -> bool:
         """이름표가 기억해 둔 상점 자리 근처인지. 상점 NPC 이름을 "?"로 읽으면 '말 건 목록'에 안 남아서,
         상점이 끝난 뒤 일반 NPC인 줄 알고 또 걸어갔다 온다 (22:48 12층 포셔)."""
@@ -931,7 +938,7 @@ class Bot:
             # (전엔 "말 건 목록"이 비어 있지만 않으면 건너뛰어서, 보스 이름을 목록에 넣은 20층에서 상점을 놓쳤다)
             here = self.nav.last_pos
             near_last = here is not None and any(math.hypot(here[0] - p[0], here[1] - p[1]) < 250 for p in self.talk_spots)
-            if not self.already_talked(name) and not (name == "?" and near_last):
+            if not self.already_talked(name) and not near_last:
                 self.talked.add(name)
                 if here is not None:
                     self.talk_spots.append(here)
@@ -974,11 +981,12 @@ class Bot:
         if now - self.npc_scanned > NPC_SCAN_EVERY and not enhance_first:
             self.npc_scanned = now
             shop_ok = self.has_shop() and not self.shop_done and not self.want_enhance(img)
-            todo = [lb for lb in self.npc_labels(img) if not self.already_talked(lb[0])
-                    and (not (lb[2] or (self.has_shop() and self.near_shop_spot(lb[1]))) or shop_ok)]
+            def fresh(lb) -> bool:
+                return (not self.already_talked(lb[0]) and not self.near_talk_spot(lb[1])
+                        and (not (lb[2] or (self.has_shop() and self.near_shop_spot(lb[1]))) or shop_ok))
+            todo = [lb for lb in self.npc_labels(img) if fresh(lb)]
             if not todo:  # 이름표 OCR이 실패했을 수 있다: 초록 딱지를 색으로 찾는다
-                todo = [lb for lb in self.green_tag_npcs(img, char)
-                        if not self.already_talked(lb[0]) and (not lb[2] or shop_ok)]
+                todo = [lb for lb in self.green_tag_npcs(img, char) if fresh(lb)]
             if todo:
                 name, box, _ = min(todo, key=lambda lb: abs(lb[1][0] - char[0]) + abs(lb[1][1] - char[1]))
                 x, y, w, h = box
