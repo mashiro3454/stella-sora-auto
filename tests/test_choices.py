@@ -172,3 +172,9 @@ def test_gamble_gold_leading_one_read_as_four():
     # 07:49: 1180을 "4180"으로 읽어 결과를 몰랐다
     assert _judge(530, [4180, 4180, 4180])[0] is True
     assert _judge(530, [4330, 4330, 4330])[0] is False  # 코인 그림 + 330 (진 판)
+
+
+def test_gamble_gold_trailing_zero_dropped():
+    # 09:17: 280을 "28"로 읽어 결과를 몰랐다 (카드 화면에서 다시 확인해 진 것으로 바로잡음)
+    assert _judge(480, [28, 28, 28])[0] is False
+    assert _judge(480, [113, 113, 113])[0] is True

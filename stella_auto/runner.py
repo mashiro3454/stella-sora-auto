@@ -212,7 +212,8 @@ class Bot:
             def cands(v: int, one: bool = False) -> list[int]:
                 s = str(v)
                 out = [v] + ([int(s[1:])] if len(s) >= 3 else [])
-                return out + ([int("1" + s[1:])] if one and len(s) >= 4 and s[0] != "1" else [])
+                out += [int("1" + s[1:])] if one and len(s) >= 4 and s[0] != "1" else []
+                return out + ([v * 10] if one and len(s) <= 3 else [])  # 끝 0을 빠뜨림 (09:17 280 -> "28")
 
             for b in cands(before):
                 for g in sorted(golds, reverse=True):
