@@ -483,7 +483,8 @@ class Bot:
             self.run_tracked = True  # 층을 몰랐다가 1~3층으로 밝혀짐: 650원 도박 규칙을 다시 쓴다
         self.run.floor = floor
         self.floor_known = True
-        if self.step_mode and self.gamble_won:
+        if self.step_mode and self.gamble_won and not self.step_pause_sec:
+            # --step과 --step-pause를 같이 주면: 650원 이길 때만 멈춰 기다리고, 층마다는 5초 멈춤만
             self.pause_pending = f"{floor}층 시작"
         self.floor_uncertain = False
         self.exit_seen_at = None
