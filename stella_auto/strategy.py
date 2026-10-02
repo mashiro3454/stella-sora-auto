@@ -179,6 +179,13 @@ class CardChooser:
         rarity = p.rarity if p and p.rarity else 9
         return (below, -prio, cur, -rarity)
 
+    def _upgrade_worth(self, card: Card, state: RunState, vals: dict) -> bool:
+        """필수/다다익선 레벨업 (목표 넘은 다다익선(3)은 빼고): 필수 찾기 리롤을 멈추고 집을 카드."""
+        if card.is_new or (vals[card.slot][0] or 0) <= 0:
+            return False
+        goal = self.goals.get(card.potential.id) if card.potential else None
+        return bool(goal and goal.mark in ("필수", "다다익선") and not self._weak(card, state))
+
     def _weak(self, card: Card, state: RunState) -> bool:
         """목표를 넘은 다다익선(목표 3) 레벨업: 집긴 하지만 리롤을 한 번 해 볼 만한 카드."""
         goal = self.goals.get(card.potential.id) if card.potential else None
@@ -204,12 +211,15 @@ class CardChooser:
             hit = any(c.potential and c.potential.id in ids and c.level_to >= 2 for c in cards)
             # 프리셋 코어(1000점)가 떠 있으면 그냥 집는다 (13층에서 집중 속사를 리롤로 넘겼다)
             core = any((v or 0) >= SAFEGUARD_BONUS for v in values.values())
+            # 필수/다다익선의 레벨업이 떠 있으면 리롤하지 말고 집는다 (사용자 2026-10-02 23시:
+            # "리롤해도 되는 건 다다익선(3)이 이미 목표(3렙) 이상인 경우뿐". 22:53 15층: 결전의 순간 5→6을 넘겼다)
+            upgrade = any(self._upgrade_worth(c, state, vals) for c in cards)
             # 20층은 마지막이라 한 화면 횟수 제한 없이, 남길 돈 없이 (사용자: "먹을 때까지 리롤")
             more = last or state.fish_this_pick < FISH_PER_PICK
             money = state.gold >= REROLL_COST + (0 if last else FISH_RESERVE)
             # 그 캐릭터 잠재를 6레벨 쪽으로 올리는 카드가 떠 있으면 리롤하지 않고 그걸 집는다 (사용자 설명)
             helps = any(vals[c.slot][0] and self.help_bonus(c, state) > 0 for c in cards)
-            if not hit and not core and not helps and more and money:
+            if not hit and not core and not helps and not upgrade and more and money:
                 state.fish_this_pick += 1
                 state.fish_total += 1
                 return Decision("reroll", None, f"필수 찾기 리롤 (0레벨: {', '.join(g.name for g in missing)})", values)

@@ -906,6 +906,11 @@ class Bot:
 
         prompt = nv.find_prompt(img)
 
+        # 0-0) 거래의 방(5·12·19층)은 구조가 늘 같다 (사용자): 자리를 아는 지도에선 이름표를 훑지 않고
+        # 상점·강화머신 두 자리만 오간다. 순서(상점 먼저냐 강화 먼저냐)는 want_enhance가 정한다
+        if self.trade_step(img, pos, prompt):
+            return None
+
         # 0) 거래의 방 강화머신: 가까이 가면 "F 강화". 180원까지 누른다
         if prompt == "enhance" and now - self.last_talk_at > 2.5 and self.want_enhance(img):
             self.press_enhance(img)
@@ -1126,6 +1131,50 @@ class Bot:
         return None
 
     # -- 걷기 도우미 -------------------------------------------------------------
+    def trade_step(self, img: np.ndarray, pos: tuple[float, float], prompt: str | None) -> bool:
+        """거래의 방 스크립트: 기억해 둔 상점/강화머신 자리만 오간다. 처리했으면 True.
+        처음 보는 지도(자리 모름)나 20층 보스 뒤 상점은 평소 흐름대로 (False)."""
+        if self.room != "거래" or not self.combat_done:
+            return False
+        if not self.nav.spots("shop") or not self.nav.spots("enhance"):
+            return False
+        want_e = self.want_enhance(img)
+        if not want_e and self.shop_done:
+            return False  # 둘 다 끝 (또는 강화 우선 캐릭터 재방문 판단은 뒤 흐름에서)
+        now = time.monotonic()
+        if self.shop_search_start is None:
+            self.shop_search_start = now
+        if now - self.shop_search_start > TRADE_TIMEOUT:
+            self.shop_done = True
+            self.enhance_count = 99
+            self.log("상점", f"{TRADE_TIMEOUT:.0f}초 동안 강화/상점을 못 끝냄, 그냥 나감 (스크립트)", img)
+            return False
+        kind = "enhance" if want_e else "shop"
+        want_prompt = "enhance" if want_e else "talk"
+        if prompt == want_prompt and now - self.last_talk_at > 2.5:
+            if want_e:
+                self.press_enhance(img)
+            else:
+                self.last_talk_at = now
+                self.log("상점", "포셔에게 F (거래의 방 스크립트)", img)
+                self.gi.key("f")
+                time.sleep(1.0)
+            return True
+        spot = min(self.nav.spots(kind), key=lambda p: math.hypot(p[0] - pos[0], p[1] - pos[1]))
+        if math.hypot(spot[0] - pos[0], spot[1] - pos[1]) > 80:
+            self.log("이동", f"{kind} 자리로 감 (거래의 방 스크립트)")
+            res = self.nav.walk(lambda im, ch, p: Goal(spot, kind, arrive=60), self.stop_for(want_prompt),
+                                max_sec=20, avoid_exit=True, why=f"{kind} 자리")
+            self.log("이동", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
+            if res.reason == "arrived":
+                self.nudge_until(want_prompt, first="s" if want_e else "w")
+        elif now - self.last_talk_at > 2.5:
+            # 자리엔 왔는데 표시가 안 뜬다: 조금씩 움직여 본다
+            self.nudge_until(want_prompt, first="s" if want_e else "w")
+        else:
+            time.sleep(0.2)
+        return True
+
     def go_spot(self, kind: str) -> bool:
         """이 지도에서 전에 말을 걸었던 자리(kind)로 간다. 이번 층에서 아직 안 가 본 자리가 없으면 False."""
         pos = self.nav.last_pos

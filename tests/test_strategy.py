@@ -165,7 +165,7 @@ def test_fish_for_missing_essential(chooser):
     have_all_but_one = {g.id: 3 for g in chooser.goals.values() if g.mark == "필수" and g.kind != "core"}
     missing = BY_NAME["섬멸의 잔향"].id
     have_all_but_one.pop(missing)
-    offer = cards(("결전의 순간", 4, 3), ("칼날의 춤사위", 3), ("바람의 섬광", 3))
+    offer = cards(("칼날의 춤사위", 4, 3), ("무영 사냥꾼", 3), ("바람의 섬광", 3))
     st = RunState(floor=14, gold=1000, owned=dict(have_all_but_one), keep_after_gamble=True)
     for _ in range(3):
         d = chooser.choose(offer, st)
@@ -174,7 +174,7 @@ def test_fish_for_missing_essential(chooser):
     assert chooser.choose(offer, st).action == "pick"  # 3번 하면 평소대로
     # 그 필수가 Lv2 이상으로 뜨면 바로 집는다
     st2 = RunState(floor=14, gold=1000, owned=dict(have_all_but_one), keep_after_gamble=True)
-    d = chooser.choose(cards(("결전의 순간", 4, 3), ("섬멸의 잔향", 2), ("바람의 섬광", 3)), st2)
+    d = chooser.choose(cards(("칼날의 춤사위", 4, 3), ("섬멸의 잔향", 2), ("바람의 섬광", 3)), st2)
     assert d.action == "pick" and d.card.potential.name == "섬멸의 잔향"
     # 12층, 돈 부족, 이기지 않은 판에선 안 함
     for st3 in (RunState(floor=12, gold=1000, owned=dict(have_all_but_one), keep_after_gamble=True),
@@ -247,7 +247,7 @@ def all_but(*missing: str) -> dict[int, int]:
 
 def test_fish_without_limit_on_last_floor(chooser):
     # 20층: 0레벨 필수가 뜰 때까지 리롤 (650원 안 이긴 판도, 한 화면 3번 제한 없이, 남길 돈 없이)
-    offer = cards(("결전의 순간", 4, 3), ("칼날의 춤사위", 3), ("바람의 섬광", 3))
+    offer = cards(("칼날의 춤사위", 4, 3), ("무영 사냥꾼", 3), ("바람의 섬광", 3))
     st = RunState(floor=20, gold=1000, owned=all_but("섬멸의 잔향"), fish_this_pick=10, rerolls_this_pick=10)
     assert "필수 찾기" in chooser.choose(offer, st).reason
     st.gold = 40
@@ -256,7 +256,7 @@ def test_fish_without_limit_on_last_floor(chooser):
     assert chooser.choose(offer, st).action == "pick"  # 돈이 없으면 평소대로 (재시작 안 함)
     # Lv1로 뜨면 원칙대로 안 집고 계속 찾는다
     st.gold = 1000
-    d = chooser.choose(cards(("결전의 순간", 4, 3), ("섬멸의 잔향", 1)), st)
+    d = chooser.choose(cards(("칼날의 춤사위", 4, 3), ("섬멸의 잔향", 1)), st)
     assert d.action == "reroll"
 
 
@@ -274,7 +274,7 @@ def test_locked_character_upgrades_instead_of_fishing(chooser):
     have[BY_NAME["관통 탄도"].id] = 6
     st = RunState(floor=20, gold=1000, owned=have)
     assert not chooser.char_locked(BY_NAME["관통 탄도"].char_id, st)
-    assert "필수 찾기" in chooser.choose(cards(("결전의 순간", 5, 4), ("칼날의 춤사위", 3)), st).reason
+    assert "필수 찾기" in chooser.choose(cards(("칼날의 춤사위", 4, 3), ("바람의 섬광", 3)), st).reason
 
 
 def test_fish_takes_upgrade_of_same_character(chooser):
@@ -285,8 +285,13 @@ def test_fish_takes_upgrade_of_same_character(chooser):
     st = RunState(floor=20, gold=1500, owned=have)
     d = chooser.choose(cards(("동력 증압", 1), ("바람 정령의 공명", 3, 2), ("섬멸의 잔향", 6, 5)), st)
     assert d.action == "pick" and d.card.potential.name == "섬멸의 잔향"
-    # 다른 캐릭터 레벨업만 뜨면 계속 찾는다
+    # 필수 레벨업(숲속 4→5)이 떠 있으면 리롤 대신 집는다 (사용자 23시 규칙)
     d = chooser.choose(cards(("바람 장벽", 2), ("가속 돌파", 1), ("숲속 공주의 은총", 5, 4)), st)
+    assert d.action == "pick" and d.card.potential.name == "숲속 공주의 은총"
+    # 목표 넘은 다다익선(3) 레벨업뿐이면 계속 찾는다
+    have2 = dict(st.owned); have2[BY_NAME["칼날의 춤사위"].id] = 3
+    st2 = RunState(floor=20, gold=1500, owned=have2)
+    d = chooser.choose(cards(("바람 장벽", 2), ("가속 돌파", 1), ("칼날의 춤사위", 4, 3)), st2)
     assert d.action == "reroll" and "필수 찾기" in d.reason
 
 
@@ -326,3 +331,19 @@ def test_enhance_first_defers_to_shop():
     b.preset.enhance_first = None
     b.shop_reopens = 0
     assert not b.defer_enhance_for_priority()  # 옵션이 꺼진 프리셋은 예전 그대로
+
+
+def test_fish_stops_for_essential_or_plenty6_upgrade(chooser):
+    # 사용자 2026-10-02 23시: 필수/다다익선(6)의 n→n+1 레벨업이 떠 있으면 리롤하지 말고 집는다
+    # (22:53 15층: 결전의 순간 5→6을 필수 찾기 리롤로 넘겼다)
+    have = all_but("섬멸의 잔향")
+    have[BY_NAME["결전의 순간"].id] = 5
+    st = RunState(floor=15, gold=1500, owned=have, keep_after_gamble=True)
+    d = chooser.choose(cards(("폭풍의 흡수", 3), ("결전의 순간", 6, 5), ("무영 사냥꾼", 4, 3)), st)
+    assert d.action == "pick" and d.card.potential.name == "결전의 순간"
+    # 다다익선(3)이 목표 아래(2→3)인 레벨업도 집는다
+    have2 = all_but("섬멸의 잔향")
+    have2[BY_NAME["섬광 발도"].id] = 2
+    st2 = RunState(floor=15, gold=1500, owned=have2, keep_after_gamble=True)
+    d = chooser.choose(cards(("폭풍의 흡수", 3), ("섬광 발도", 3, 2)), st2)
+    assert d.action == "pick" and d.card.potential.name == "섬광 발도"
