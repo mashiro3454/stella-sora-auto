@@ -917,7 +917,10 @@ class Bot:
             return None
 
         # 1) "F 대화"가 떠 있으면, 아직 말 안 건 NPC면 말을 건다 (거래의 방에선 상점이 열린다)
-        if prompt == "talk" and now - self.last_talk_at > TALK_COOLDOWN:
+        if (prompt == "talk" and now - self.last_talk_at > TALK_COOLDOWN
+                and not (self.has_shop() and self.shop_done
+                         and any(math.hypot(pos[0] - sx, pos[1] - sy) < 300 for sx, sy in self.nav.spots("shop")))):
+            # 마지막 조건: 끝난 상점 NPC 앞의 "F 대화"로 상점을 또 열지 않는다 (23:02 19층 포셔)
             name = self.nearest_label(img, char)
             # 이름을 못 읽었는데 이 층에서 바로 이 근처에서 말을 걸었다면, 대개 방금 그 NPC다
             # (전엔 "말 건 목록"이 비어 있지만 않으면 건너뛰어서, 보스 이름을 목록에 넣은 20층에서 상점을 놓쳤다)
