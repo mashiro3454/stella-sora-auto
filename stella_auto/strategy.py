@@ -131,7 +131,9 @@ class CardChooser:
         if missing and can_reroll:
             ids = {g.id for g in missing}
             hit = any(c.potential and c.potential.id in ids and c.level_to >= 2 for c in cards)
-            if not hit and state.fish_this_pick < FISH_PER_PICK and state.gold >= REROLL_COST + FISH_RESERVE:
+            # 프리셋 코어(1000점)가 떠 있으면 그냥 집는다 (13층에서 집중 속사를 리롤로 넘겼다)
+            core = any((v or 0) >= SAFEGUARD_BONUS for v in values.values())
+            if not hit and not core and state.fish_this_pick < FISH_PER_PICK and state.gold >= REROLL_COST + FISH_RESERVE:
                 state.fish_this_pick += 1
                 state.fish_total += 1
                 return Decision("reroll", None, f"필수 찾기 리롤 (0레벨: {', '.join(g.name for g in missing)})", values)

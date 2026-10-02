@@ -180,3 +180,14 @@ def test_fish_for_missing_essential(chooser):
     for st3 in (RunState(floor=12, gold=1000, owned=dict(have_all_but_one), keep_after_gamble=True),
                 RunState(floor=14, gold=200, owned=dict(have_all_but_one), keep_after_gamble=True)):
         assert "필수 찾기" not in chooser.choose(offer, st3).reason
+
+
+def test_fish_keeps_preset_core(chooser):
+    # 13층: 프리셋 코어가 떠 있으면 필수 찾기 리롤을 하지 않고 코어를 집는다
+    have = {g.id: 3 for g in chooser.goals.values() if g.mark == "필수" and g.kind != "core"}
+    have.pop(BY_NAME["관통 탄도"].id)
+    core = next(g for g in chooser.goals.values() if g.kind == "core")
+    offer = [card(core.name, 1, slot=0), card("칼날의 춤사위", 3, slot=1), card("바람의 섬광", 3, slot=2)]
+    st = RunState(floor=13, gold=1100, owned=have, keep_after_gamble=True)
+    d = chooser.choose(offer, st)
+    assert d.action == "pick" and d.card.potential.name == core.name
