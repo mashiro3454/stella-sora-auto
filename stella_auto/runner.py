@@ -133,6 +133,7 @@ class Bot:
         self.shop_queue: list = []
         self.shop_rerolled = False
         self.shop_bought: set[tuple[bool, int]] = set()  # (리롤 뒤인지, 칸) 이 상점에서 산 것
+        self.shop_click_fails: dict[tuple[bool, int], int] = {}  # 눌렀는데 구매 창이 안 뜬 횟수
         self.shop_peeked = False
         self.note_needs = None  # 가방에서 읽은 협주스킬별 필요한 소리
         self.note_users = self._load_note_users()  # 소리 종류 -> 쓰는 협주스킬 수 (지난번 가방에서 읽은 것)
@@ -407,6 +408,7 @@ class Bot:
         self.shop_queue = []
         self.shop_rerolled = False
         self.shop_bought = set()
+        self.shop_click_fails = {}
         self.shop_peeked = False
         self.trade_tick = 0
         self.floor_changed_at = time.monotonic()
@@ -659,11 +661,22 @@ class Bot:
                              for i in items)
             self.log("상점", f"{self.shop_index}번째 상점, {self.shop_plan.reason} | {desc}", img)
         if self.shop_queue:
-            item = self.shop_queue.pop(0)
+            item = self.shop_queue[0]
+            key = (self.shop_rerolled, item.slot)
             self.log("상점", f"구매: {item.name} {item.price}원")
-            self.shop_bought.add((self.shop_rerolled, item.slot))
             self.gi.click(*item.click)
             time.sleep(0.8)
+            if self.det.detect(self.grab()).state == "shop":
+                # 구매 창이 안 떴다: 안 눌린 것. 산 걸로 치면 안 된다 (18:39 20층: 카드 고르기에서 돌아오자마자 누른
+                # 160원 음료가 안 눌렸는데 산 칸으로 적어서, 그 칸을 건너뛰고 200원짜리를 샀다)
+                self.shop_click_fails[key] = self.shop_click_fails.get(key, 0) + 1
+                if self.shop_click_fails[key] < 3:
+                    self.log("상점", f"구매 창이 안 뜸, 다시 누름 ({self.shop_click_fails[key]}번째)")
+                    time.sleep(0.5)
+                    return
+                self.log("상점", f"{item.name}: 구매 창이 세 번 안 떠서 건너뜀")
+            self.shop_queue.pop(0)
+            self.shop_bought.add(key)
             if item.kind == "potential":
                 # 음료를 사면 카드 고르기가 나오고 거기서 리롤로 돈이 바뀐다. 돌아오면 돈을 다시 읽고 다시 계획한다
                 self.shop_plan = None
