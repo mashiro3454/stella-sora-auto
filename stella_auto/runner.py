@@ -26,7 +26,7 @@ from . import navigate as nv
 from .capture import capture, ensure_client_size, find_game_window, restore
 from .cards import CARD_AREA, read_cards, team_pool
 from .choices import find_option_boxes, read_choices
-from .shop import plan_purchases, read_reroll, read_shop
+from .shop import drink_face, plan_purchases, read_reroll, read_shop
 from .notes import NOTE_NAMES, read_needs, shop_note_type, type_from_name
 from .gamedata import default_gamedata
 from . import killswitch
@@ -806,6 +806,10 @@ class Bot:
             for it in items:
                 if (self.shop_rerolled, it.slot) in self.shop_bought:
                     it.sold_out = True  # 이미 산 칸 (품절 표시를 못 읽어도 다시 사지 않게)
+                if it.kind == "potential" and not it.sold_out:
+                    it.face = drink_face(img, it)
+                    if it.face == -1:
+                        self.save_full(img, f"face_unknown_{it.slot}")  # 모르는 얼굴: 나중에 템플릿을 뜬다
                 if it.kind == "notes":
                     it.note_type = shop_note_type(img, it.click[0], it.click[1], it.name)
                     if self.note_needs is not None and it.note_type is not None:
@@ -819,12 +823,14 @@ class Bot:
             self.shop_plan = plan_purchases(items, gold, shop_index=self.shop_index, last_shop=self.run.floor >= 20,
                                             reroll_left=left, reroll_price=price,
                                             note_have=self.note_needs.have if self.note_needs else None,
-                                            enhance_reserve=reserve)
+                                            enhance_reserve=reserve, prefer_char=self.preset.enhance_first)
             self.shop_queue = list(self.shop_plan.buy)
             bought = {i.slot for i in self.shop_plan.buy}
             self.shop_potions_left = bool(self.shop_plan.buy) and any(
                 i.kind == "potential" and not i.sold_out and i.slot not in bought for i in items)
+            names = {c.char_id: c.name for c in self.preset.characters}
             desc = ", ".join(f"{i.slot}:{i.name}({i.price}{'/' + str(i.old_price) if i.discounted else ''}"
+                             f"{' ' + names.get(i.face, '모르는 얼굴') + ' 얼굴' if i.face is not None else ''}"
                              f"{' 품절' if i.sold_out else ''}"
                              f"{' ' + NOTE_NAMES[i.note_type] + ' 협주' + str(i.users) if i.note_type is not None and i.users is not None else ''})"
                              for i in items)

@@ -146,3 +146,30 @@ def test_full_price_notes_skipped_when_others_low():
     plan = plan_purchases([item], 3000, shop_index=3, last_shop=False, reroll_left=0, reroll_price=None,
                           note_have={8: 42, 6: 25, 0: 30})
     assert plan.buy == [item]
+
+
+def test_drink_face_detection():
+    # 사용자 2026-10-03: 얼굴 음료는 그 캐릭터 잠재만 나온다. 레이스(143) 얼굴이 찍힌 실제 상점 화면
+    from stella_auto.shop import COLUMNS, ROWS, drink_face
+    img = cv2.imdecode(np.fromfile(str(SCREENS / "shop__live_face_race.jpg"), np.uint8), cv2.IMREAD_COLOR)
+    faced = item(0, "잠재력 특제 음료", 200)
+    faced.click = (COLUMNS[0], ROWS[0][1])
+    assert drink_face(img, faced) == 143
+    plain = item(1, "잠재력 특제 음료", 200)
+    plain.click = (COLUMNS[1], ROWS[0][1])
+    assert drink_face(img, plain) is None
+
+
+def test_plan_prefers_eleanor_capable_drinks():
+    # 민무늬(셋 다 가능)를 레이스 얼굴보다 먼저 산다. 엘레노어 얼굴이면 그게 1등
+    def potion(slot, price, face=None, old=None):
+        it = item(slot, "잠재력 특제 음료", price, old)
+        it.face = face
+        return it
+    items = [potion(0, 200, face=143), potion(1, 200), potion(2, 200, face=137), potion(3, 200, face=-1)]
+    plan = plan_purchases(items, 2000, shop_index=4, last_shop=True, reroll_left=0, reroll_price=None,
+                          prefer_char=137)
+    assert [i.slot for i in plan.buy][:4] == [2, 1, 3, 0]  # 엘레노어 얼굴 > 민무늬 > 모르는 얼굴 > 레이스 얼굴
+    # 옵션이 없으면 가격순 그대로
+    plan = plan_purchases(items, 2000, shop_index=4, last_shop=True, reroll_left=0, reroll_price=None)
+    assert [i.slot for i in plan.buy][:4] == [0, 1, 2, 3]

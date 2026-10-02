@@ -33,6 +33,7 @@ class ShopItem:
     sold_out: bool
     click: tuple[int, int]  # 상품 그림
     note_type: int | None = None  # 소리 종류 (notes.NOTE_NAMES 순서)
+    face: int | None = None  # 음료의 캐릭터 얼굴: char_id(그 캐릭터 잠재만 나옴), -1(모르는 얼굴), None(민무늬: 셋 다)
     users: int | None = None  # 이 소리가 필요한 협주스킬 수 (가방에서 읽음, 모르면 None)
     have: int | None = None  # 이 소리를 가진 개수
 
@@ -142,6 +143,45 @@ def read_reroll(img: np.ndarray, ocr: KoreanOcr) -> tuple[int | None, int | None
     return (int(price[-1]) if price else None), (int(left[-1]) if left else 0)
 
 
+_FACE_TEMPLATES: dict[int, "np.ndarray"] = {}
+
+
+def _face_templates() -> dict[int, "np.ndarray"]:
+    if not _FACE_TEMPLATES:
+        from .screen import TEMPLATE_DIR
+
+        for f in TEMPLATE_DIR.glob("drink_face_*.png"):
+            img = cv2.imdecode(np.fromfile(str(f), np.uint8), cv2.IMREAD_GRAYSCALE)
+            _FACE_TEMPLATES[int(f.stem.split("_")[-1])] = img
+    return _FACE_TEMPLATES
+
+
+def drink_face(img: np.ndarray, item: ShopItem) -> int | None:
+    """잠재력 음료에 그려진 캐릭터 얼굴 (사용자 2026-10-03: 얼굴 음료는 그 캐릭터 잠재만 나온다).
+
+    컵 오른쪽 아래 동그란 초상화를 원 찾기로 찾고, 아는 얼굴 템플릿과 맞춘다.
+    char_id / -1(모르는 얼굴: 템플릿에 없음) / None(민무늬). 상점 자료 700칸 검증: 얼굴 95, 오탐 0."""
+    x, y = item.click
+    cell = img[max(0, y - 80):y + 70, max(0, x - 95):x + 95]
+    if cell.shape[0] < 150 or cell.shape[1] < 190:
+        return None
+    g = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
+    circ = cv2.HoughCircles(g, cv2.HOUGH_GRADIENT, 1, 60, param1=120, param2=42, minRadius=26, maxRadius=38)
+    if circ is None:
+        return None
+    for cx, cy, _r in circ[0]:
+        if not (60 < cx < 185 and 30 < cy < 145) or not (26 <= cx < 164 and 26 <= cy < 124):
+            continue
+        disc = g[int(cy) - 26:int(cy) + 26, int(cx) - 26:int(cx) + 26]
+        best_id, best = -1, 0.0
+        for cid, t in _face_templates().items():
+            score = float(cv2.matchTemplate(disc, t, cv2.TM_CCOEFF_NORMED).max())
+            if score > best:
+                best_id, best = cid, score
+        return best_id if best >= 0.5 else -1
+    return None
+
+
 @dataclass
 class ShopPlan:
     buy: list[ShopItem]
@@ -151,10 +191,13 @@ class ShopPlan:
 
 def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_shop: bool,
                    reroll_left: int, reroll_price: int | None, reserve: int = 80,
-                   note_have: dict[int, int] | None = None, enhance_reserve: int = 0) -> ShopPlan:
+                   note_have: dict[int, int] | None = None, enhance_reserve: int = 0,
+                   prefer_char: int | None = None) -> ShopPlan:
     """살 것 고르기.
 
-    - 할인하는 잠재력 음료는 전부 산다.
+    - 할인하는 잠재력 음료는 전부 산다. prefer_char(강화 우선 캐릭터)가 있으면 그 캐릭터 잠재가
+      나올 수 있는 음료부터: 그 캐릭터 얼굴 → 민무늬 → 모르는 얼굴 → 다른 캐릭터 얼굴 (돈이 모자라
+      뒤쪽을 못 사도 앞쪽이 남게). 얼굴 음료는 그 캐릭터 잠재만 나온다 (사용자 2026-10-03).
     - 소리 (사용자 규칙, 협주스킬에 필요한 소리만): 5개 45원은 산다, 5개 72원은 가진 게 41개 미만이면,
       15개 200원은 협주스킬 2개 이상이 쓰면, 5개 90원은 4개 이상이 쓰면 (단 그 소리만 40개쯤 있고
       협주스킬에 필요한 다른 소리가 20개 미만이면 안 산다). 15개 320/400원은 안 산다.
@@ -179,7 +222,12 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
             return True
         return False
 
-    for it in sorted([i for i in avail if i.kind == "potential" and i.discounted], key=lambda i: i.price):
+    def face_rank(i: ShopItem) -> int:
+        if prefer_char is None or i.face == prefer_char:
+            return 0
+        return {None: 1, -1: 2}.get(i.face, 3)
+
+    for it in sorted([i for i in avail if i.kind == "potential" and i.discounted], key=lambda i: (face_rank(i), i.price)):
         take(it)
     notes = [i for i in avail if i.kind == "notes"]
     for it in [i for i in notes if i.note_count == 5 and i.price == PRICES["notes5"][2] and (i.users is None or i.users >= 1)]:
@@ -198,7 +246,8 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
               and money - reroll_price >= keep)
     if not reroll:
         full_keep = keep if last_shop else max(keep, FULL_PRICE_KEEP.get(shop_index, 1000) + enhance_reserve)
-        full_potions = sorted([i for i in avail if i.kind == "potential" and not i.discounted], key=lambda i: i.price)
+        full_potions = sorted([i for i in avail if i.kind == "potential" and not i.discounted],
+                              key=lambda i: (face_rank(i), i.price))
         for it in full_potions:
             if money - it.price >= full_keep:
                 take(it)
