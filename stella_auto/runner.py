@@ -182,6 +182,7 @@ class Bot:
         self.not_npc = [n.replace(" ", "") for n in gd.skill_names] + [p.name.replace(" ", "") for p in gd.potentials.values() if p.name] \
             + list(BOSS_NAMES)
         self.choice_path = log_dir / "choices.jsonl"
+        self.rec = Recorder(log_dir / "videos")  # 650원 이긴 판만 남긴다 (사용자 요청 2026-10-03)
 
     @staticmethod
     def _prune_shots(shots: Path, keep_days: int) -> None:
@@ -207,7 +208,9 @@ class Bot:
         if (win.width, win.height) != (1920, 1080):
             self.log("화면", f"게임 창 크기가 {win.width}x{win.height}라서 1920x1080으로 맞춤")
             win = ensure_client_size(win)
-        return capture(win)
+        img = capture(win)
+        self.rec.push(img)
+        return img
 
     def shot(self, img: np.ndarray, tag: str) -> str:
         """판단한 순간의 화면을 남긴다 (나중에 왜 그렇게 했는지 보려고)."""
@@ -507,6 +510,8 @@ class Bot:
             self.run_tracked = True  # 층을 몰랐다가 제목/지도로 1~3층이 확인됨: 650원 도박 규칙을 다시 쓴다
         self.run.floor = floor
         self.floor_known = True
+        if not self.rec.recording:
+            self.rec.start()
         if self.step_mode and self.gamble_won and not self.step_pause_sec:
             # --step과 --step-pause를 같이 주면: 650원 이길 때만 멈춰 기다리고, 층마다는 5초 멈춤만
             self.pause_pending = f"{floor}층 시작"
@@ -1405,6 +1410,10 @@ class Bot:
 
     def restart(self, reason: str) -> None:
         """포기 → 분해 → 다시 출발해서 1층 필드까지."""
+        self.state_path().unlink(missing_ok=True)  # 끝난 판 상태를 새 판이 이어받지 않게 (02:01)
+        kept = self.rec.stop(keep=self.gamble_won)
+        if kept:
+            self.log("녹화", f"이긴 판 녹화 저장: {kept.name}")
         self.log("재시작", reason, self.grab())
         self.restart_pending = ""
         self.start_from_menu(give_up=True)
@@ -1772,6 +1781,10 @@ class Bot:
         while True:
             r = self.run_floor()
             if r == "tower_done":
+                self.state_path().unlink(missing_ok=True)
+                kept = self.rec.stop(keep=self.gamble_won)
+                if kept:
+                    self.log("녹화", f"이긴 판 녹화 저장: {kept.name}")
                 self.save_record()
                 self.runs_done += 1
                 self.log("끝", f"탑 {self.runs_done}판째 끝 (그사이 재시작 {self.restarts}번)")
@@ -2058,6 +2071,9 @@ def main(argv: list[str] | None = None) -> int:
     except Stop as e:
         bot.log("멈춤", str(e))
     finally:
+        kept = bot.rec.stop(keep=bot.gamble_won)
+        if kept:
+            bot.log("녹화", f"이긴 판 녹화 저장: {kept.name}")
         bot.gi.release_all()
         pid_file.unlink(missing_ok=True)
         kernel32.CloseHandle(ctypes.c_void_p(mutex))
