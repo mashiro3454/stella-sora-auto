@@ -870,6 +870,9 @@ class Bot:
                 # 잘못 적은 막힌 칸 때문에 길이 막혀 구석으로 가는 경우가 있다 (8층: NPC에 막힌 뒤 왼쪽 끝 술통까지 감)
                 n = self.nav.map.forget_blocks()
                 self.log("이동", f"출구로 {self.exit_fails}번 못 감: 막힌 칸 {n}개를 지우고 길을 다시 찾음")
+                if self.nav.door_seen is not None:
+                    self.nav.door_seen = None  # 고른 문으로 못 간다: 다시 고르게 한다
+                    self.nav.door_candidate = None
             if self.nav.memory_exit is not None and (self.exit_fails >= 6 or
                                                      (self.exit_fails >= 2 and self.nav.ignored_doors >= 10) or
                                                      (self.exit_fails >= 1 and self.nav.ignored_doors >= 30)):

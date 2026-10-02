@@ -267,6 +267,12 @@ class Navigator:
         if door and nv.door_matches(door, self.next_kind) and not self._is_false_door(self.odo.to_world(door.center)) \
                 and self._far_from_trusted_exit(self.odo.to_world(door.center)):
             self.ignored_doors += 1  # 믿는 출구와 먼 문양을 본 화면 수 (출구로 못 가는 게 겹치면 기억 대신 이 문을 믿는다)
+        if door and self.door_seen and nv.door_matches(door, self.next_kind):
+            w = self.odo.to_world(door.center)
+            if math.hypot(w[0] - self.door_seen[0], w[1] - self.door_seen[1]) > 300:
+                # 이미 고른 문이 있으면 다른 문양으로 바꾸지 않는다 (14층: 진짜 문과 나무문 장식 사이를 1분 오갔다).
+                # 고른 문이 가짜면 문 앞에서 확인해 지우고, 못 가면 runner가 지운다
+                return Goal(self.door_seen, "seen")
         if door and nv.door_matches(door, self.next_kind) and not self._is_false_door(self.odo.to_world(door.center)) \
                 and not self._far_from_trusted_exit(self.odo.to_world(door.center)):
             w = self.odo.to_world(door.center)
