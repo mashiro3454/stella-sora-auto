@@ -1670,7 +1670,8 @@ def find_npc_event(img: np.ndarray, threshold: float = 0.65) -> tuple[float, flo
     return loc[0] + t.shape[1] / 2, loc[1] + t.shape[0] / 2
 
 
-# 별의 탑 퀴즈 정답지 (sstoy src/modules/app-summary.ts STAR_TOWER_QA_DATA)
+# 별의 탑 퀴즈 정답지 (sstoy src/modules/app-summary.ts STAR_TOWER_QA_DATA. 사용자가 준 공략표 12개와 2026-10-02 대조:
+# 전부 일치. NPC 이름과 질문은 일부러 매칭하지 않는다 — 포셔가 베르너 질문을 할 수도 있다, 사용자 설명)
 QUIZ = {
     "음...... 별의 탑이 가장 좋아하는 숫자는 뭘까?": "3? 항상 그렇게 선택했으니까......",
     "몇시까지 버텨야 '밤샘' 이라고 생각해?": "12시?",
