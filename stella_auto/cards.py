@@ -20,6 +20,9 @@ from .preset import Preset
 CARD_AREA = (150, 200, 1780, 1000)  # 카드 3장이 놓이는 곳 (1920x1080 기준)
 NAME_MIN_HEIGHT = 25  # 카드 이름은 설명 글자(높이 ~21)보다 크다
 MATCH_THRESHOLD = 70
+# 글자 단위로는 많이 달라도 받침 하나 틀린 것 ("섬멸의 잔향"을 "성별의 잔향"으로 읽음, 글자 비율 60)은
+# 자모로 풀어서 다시 맞춘다. 자모 비율은 글자 비율보다 후해서 문턱을 높게 둔다
+JAMO_THRESHOLD = 80
 
 _LEVEL_FIX = str.maketrans({"멜": "벨", "빌": "벨", "▶": ">", "▸": ">", "→": ">"})
 _LEVEL_RE = re.compile(r"레\s*벨\s*(\d+)\s*(?:\+\s*(\d+))?\s*(?:>\s*(\d+)\s*(?:\+\s*(\d+))?)?")
@@ -75,6 +78,34 @@ def parse_level(text: str) -> tuple[int | None, int, int] | None:
     return int(a), int(b), int(b_bonus or a_bonus or 0)
 
 
+def _jamo(s: str) -> str:
+    """한글 음절을 초성/중성/종성으로 푼다 ("섬" -> "ㅅㅓㅁ")."""
+    out = []
+    for ch in s:
+        c = ord(ch) - 0xAC00
+        if 0 <= c < 11172:
+            out.append(chr(0x1100 + c // 588))
+            out.append(chr(0x1161 + c % 588 // 28))
+            if c % 28:
+                out.append(chr(0x11A7 + c % 28))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def match_name(text: str, choices: list[str]) -> tuple[int, float] | None:
+    """읽은 글자와 가장 비슷한 이름 (번호, 점수). 글자로 안 맞으면 자모로 한 번 더."""
+    q = text.replace(" ", "")
+    flat = [c.replace(" ", "") for c in choices]
+    m = process.extractOne(q, flat, scorer=fuzz.ratio)
+    if m and m[1] >= MATCH_THRESHOLD:
+        return m[2], m[1]
+    j = process.extractOne(_jamo(q), [_jamo(c) for c in flat], scorer=fuzz.ratio)
+    if j and j[1] >= JAMO_THRESHOLD:
+        return j[2], j[1]
+    return None
+
+
 def _center(line: OcrLine) -> tuple[float, float]:
     x, y, w, h = line.box
     return x + w / 2, y + h / 2
@@ -96,18 +127,17 @@ def _read_name_above(img: np.ndarray, ocr: KoreanOcr, level_box: tuple[int, int,
     if crop.size == 0:
         return None
     crop = cv2.copyMakeBorder(crop, 40, 40, 40, 40, cv2.BORDER_REPLICATE)
-    flat = [c.replace(" ", "") for c in choices]
     best: tuple[str, int, float] | None = None
     for sc in NAME_SCALES:
         text = ocr.text(crop, None, sc).replace("\n", " ").strip()
         if not text:
             continue
-        m = process.extractOne(text.replace(" ", ""), flat, scorer=fuzz.ratio)
+        m = match_name(text, choices)
         if m and (best is None or m[1] > best[2]):
-            best = (text, m[2], m[1])
+            best = (text, m[0], m[1])
         if best and best[2] >= 95:
             break
-    return best if best and best[2] >= MATCH_THRESHOLD else None
+    return best
 
 
 def read_cards(img: np.ndarray, ocr: KoreanOcr, pool: dict[int, PotentialInfo]) -> list[Card]:
@@ -121,9 +151,9 @@ def read_cards(img: np.ndarray, ocr: KoreanOcr, pool: dict[int, PotentialInfo]) 
     for l in lines:
         if l.box[3] < NAME_MIN_HEIGHT or "레벨" in l.text.translate(_LEVEL_FIX) or "달성" in l.text:
             continue
-        best = process.extractOne(l.text.replace(" ", ""), [c.replace(" ", "") for c in choices], scorer=fuzz.ratio)
-        if best and best[1] >= MATCH_THRESHOLD:
-            found.append((l.text, _center(l), ids[best[2]], best[1]))
+        best = match_name(l.text, choices)
+        if best:
+            found.append((l.text, _center(l), ids[best[0]], best[1]))
 
     # "레벨 N" 줄은 잘 읽힌다. 위에 이름이 안 잡힌 레벨 줄이 있으면 그 위를 따로 다시 읽는다
     for l in lines:

@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import pytest
 
-from stella_auto.cards import parse_level, read_cards, team_pool
+from stella_auto.cards import match_name, parse_level, read_cards, team_pool
 from stella_auto.ocr import KoreanOcr
 from stella_auto.preset import Preset
 
@@ -30,9 +30,23 @@ def read(ocr, name):
     ("card_select__v1_410.jpg", [("가속 돌파", None, 3), ("파멸의 질풍", 5, 6), ("혼란스러운 흐름", 2, 3)]),
     ("enhance_select__v1_490.jpg", [("관통 탄도", 3, 4), ("섬광 발도", 4, 5), ("바람 장벽", 3, 4)]),
     ("card_select__v1_25.jpg", [("연쇄 폭발", None, 1), ("기능 지속", None, 1), ("진원 확장", None, 1)]),
+    # 사용자 영상 (2026-10-02): "섬멸의 잔향"을 "성별의 잔향"으로 읽어 세 번째 카드를 통째로 놓쳤다
+    ("enhance_select__v2_bonus_misread.jpg", [("혼란스러운 흐름", 2, 3), ("결전의 순간", 3, 4), ("섬멸의 잔향", 3, 4)]),
 ])
 def test_read_cards(ocr, name, expected):
     assert read(ocr, name) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("성별의 잔향", "섬멸의 잔향"),  # 받침/초성 하나씩 틀림: 글자 비율 60, 자모로는 맞는다
+    ("섬멸의 잔향", "섬멸의 잔향"),
+    ("획 득", None),
+    ("6레벨 추천", None),
+])
+def test_match_name(text, expected):
+    names = [p.name for p in POOL.values() if p.name]
+    m = match_name(text, names)
+    assert (names[m[0]] if m else None) == expected
 
 
 @pytest.mark.parametrize("text, expected", [
