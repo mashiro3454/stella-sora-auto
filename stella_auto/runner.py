@@ -1194,20 +1194,31 @@ class Bot:
         time.sleep(1.5)
 
     def discard_record(self, img: np.ndarray, level, ensemble, pots: dict, result) -> None:
-        """기록 화면에서 휴지통(분해) → "분해" 안내 → 확인. 장부에는 분해했다고 적는다."""
-        self.gi.click(*BTN_TRASH)
+        """기록 화면에서 (잠겨 있으면 왼쪽 아래 "잠김"을 눌러 풀고) 휴지통(분해) → "분해" 안내 → 확인.
+        끝까지 간 판의 기록은 처음부터 잠겨 있어서 휴지통을 눌러도 안내가 안 뜬다 (12:26 분해 실패 → 저장됨).
+        장부에는 분해했다고 적는다."""
         done = False
-        for _ in range(8):
-            time.sleep(0.8)
-            im = self.grab()
-            if self.det.detect(im).state == "notice":
-                text = self.ocr.text(im, (300, 250, 1620, 750)).replace(" ", "")
-                if "분해" in text:
-                    self.gi.click(*BTN_CONFIRM)
-                    done = True
-                    break
-                self.log("기록", f"분해 안내가 예상과 다름: {text!r} (멈춤)", im)
-                raise Stop(f"기록 분해 중 모르는 안내: {text}")
+        for attempt in range(2):
+            lock = self.ocr.text(self.grab(), rc.LOCK_TEXT_BOX).replace(" ", "")
+            if "잠김" in lock:
+                self.gi.click(*rc.LOCK_BUTTON)
+                time.sleep(1.0)
+                after = self.ocr.text(self.grab(), rc.LOCK_TEXT_BOX).replace(" ", "")
+                self.log("기록", f"잠금 풀기: {lock!r} -> {after!r}")
+            self.gi.click(*BTN_TRASH)
+            for _ in range(8):
+                time.sleep(0.8)
+                im = self.grab()
+                if self.det.detect(im).state == "notice":
+                    text = self.ocr.text(im, (300, 250, 1620, 750)).replace(" ", "")
+                    if "분해" in text:
+                        self.gi.click(*BTN_CONFIRM)
+                        done = True
+                        break
+                    self.log("기록", f"분해 안내가 예상과 다름: {text!r} (멈춤)", im)
+                    raise Stop(f"기록 분해 중 모르는 안내: {text}")
+            if done:
+                break
         rec = rc.SavedRecord(name="(분해)", saved_at=time.strftime("%Y-%m-%d %H:%M:%S"),
                              floor_reached=self.run.floor, record_level=level, ensemble_levels=ensemble,
                              potentials=pots, score=round(result.total), discard_reasons=result.discard_reasons,
