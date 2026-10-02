@@ -1495,6 +1495,9 @@ class Bot:
                 else:
                     self.gi.key("space")
             elif s == "unknown" and repeats >= 2:
+                if repeats in (20, 40, 60):
+                    self.gi.key("esc")  # 모르는 팝업에 갇혔으면 ESC로 닫아 본다 (출석판에 3분 갇힌 일)
+                    time.sleep(0.8)
                 self.lobby_step(img)  # 메인 화면/출석 보상 등: 별의 탑 출발 화면까지 돌아간다
             elif s in TAP_STATES:
                 self.gi.click(*EMPTY_SPOT)
@@ -1978,7 +1981,9 @@ def lobby_action(t: str) -> str | None:
     OCR이 "탑"을 자주 빼먹고("별의탐색") 큰 "출발" 글자를 못 읽어서 주변 글자로 알아본다."""
     if "터치" in t:
         return "tap"
-    if "출석" in t:
+    if "출석" in t or "보상정보" in t or "x10000" in t or "출측" in t:
+        # 매일 출석 보상판: 제목이 꾸밈 글씨라 OCR이 "예일출측"처럼 읽는다 (05:15에 3분 갇혀 봇이 꺼짐).
+        # 아이템 개수(x10000)와 오른쪽 "보상 정보"가 더 잘 읽힌다
         return "attendance_close"
     if "들어가기" in t and ("원초적미로" in t or "폭풍과번개" in t or "물과그림자" in t):
         return "tower"
