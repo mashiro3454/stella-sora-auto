@@ -210,3 +210,9 @@ def test_tower_name_checks():
     assert score("unknown__lobby_towers.jpg", TOWER_PANEL_NAME) >= 70  # 불꽃과 먼지가 골라져 있음
     assert score("unknown__lobby_towers_other.jpg", TOWER_PANEL_NAME) < 70  # 물과 그림자가 골라져 있음
     assert score("difficulty_select__live_other_tower.jpg", TOWER_TITLE_BOX) < 70
+
+
+def test_gamble_gold_leading_one_dropped():
+    # 13:34: 1130을 "130"으로 읽었다
+    assert _judge(480, [130, 130, 130])[0] is True
+    assert _judge(480, [280, 280, 280])[0] is False
