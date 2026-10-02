@@ -290,9 +290,15 @@ class Navigator:
             self.door_candidate = w
         if self.door_seen:
             return Goal(self.door_seen, "seen")
+        fresh_marker = self.marker_goal and time.monotonic() - self.marker_goal_at < MARKER_KEEP_SEC
         if self.memory_exit:
+            if fresh_marker and math.hypot(self.marker_goal[0] - self.memory_exit[0],
+                                           self.marker_goal[1] - self.memory_exit[1]) > 700:
+                # 방금 본 가장자리 표시가 기억한 출구와 크게 다르다: 산 표시를 믿는다. 표시가 깜빡일 때마다
+                # 기억한 자리와 번갈아 가면 제자리걸음이 된다 (00:08 4층: memory 1875 <-> marker 3290을 14초 오감)
+                return Goal(self.marker_goal, "marker")
             return Goal(self.memory_exit, "memory")
-        if self.marker_goal and time.monotonic() - self.marker_goal_at < MARKER_KEEP_SEC:
+        if fresh_marker:
             return Goal(self.marker_goal, "marker")
         return None
 

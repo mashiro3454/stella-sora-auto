@@ -111,7 +111,7 @@ def _marker_templates() -> dict[str, np.ndarray]:
     if not _MARKER_TEMPLATES:
         from .screen import TEMPLATE_DIR
 
-        for kind in ("exit", "npc"):
+        for kind in ("exit", "npc", "heal"):  # heal: 회복 NPC(베아트리스)의 하트+십자 표시 (2026-10-03 4층)
             path = TEMPLATE_DIR / f"marker_{kind}.png"
             _MARKER_TEMPLATES[kind] = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_GRAYSCALE)
     return _MARKER_TEMPLATES
@@ -132,8 +132,11 @@ def _classify_marker(gray: np.ndarray, box: tuple[int, int, int, int]) -> str | 
             scores[kind] = float(cv2.matchTemplate(region, t, cv2.TM_CCOEFF_NORMED).max())
     if not scores or max(scores.values()) < MARKER_MIN_SCORE:
         return None  # 청록색 물건 (14층: 선물 상자를 출구 표시로 잡아 오른쪽/왼쪽을 7분 동안 오갔다)
+    best = max(scores, key=scores.get)
+    if best == "heal":
+        return "npc"  # 회복 NPC도 봇에게는 "말 걸 NPC"다
     if abs(scores.get("exit", 0) - scores.get("npc", 0)) > 0.08:
-        return max(scores, key=scores.get)
+        return best
     return "exit" if w / max(h, 1) < 0.9 else "npc"
 
 
