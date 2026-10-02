@@ -1792,9 +1792,11 @@ class Bot:
                     return
                 self.start_from_menu(give_up=False)
             elif r == "next_floor":
-                if self.run.floor - 1 >= max_floors:
-                    self.log("끝", f"{max_floors}층까지 넘김")
+                if self.run.floor - 1 >= max_floors and max_floors < 20:
+                    self.log("끝", f"{max_floors}층까지 넘김 (시험 모드)")
                     return
+                # 20층(끝까지)일 땐 층이 21로 세어져도 멈추지 않는다: 그건 기록 화면으로 가는 로딩을
+                # 층으로 잘못 센 것 (03:53: 여기서 프로세스가 통째로 끝나 50분을 날렸다)
             else:
                 self.restarts += 1
                 if self.time_up():

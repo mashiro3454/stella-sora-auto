@@ -15,8 +15,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-FPS = 10
-SIZE = (1280, 720)
+FPS = 8
+SIZE = (960, 540)  # mp4v라 비트레이트 조절이 없어서 크기/fps로 용량을 잡는다 (판당 약 80~120MB)
 MAX_BURST = 30  # 프레임 사이가 아주 길어도 (멈춤 등) 이만큼만 반복해 쓴다 (3초 분량)
 KEEP_DAYS = 2
 
@@ -70,8 +70,8 @@ class Recorder:
         shutil.move(str(path), str(dest))
         return dest
 
-    def prune(self, keep_days: int = KEEP_DAYS, keep_count: int = 15) -> None:
-        """이틀 지난 것과 최신 15개를 넘는 것은 지운다 (저장 공간/OneDrive 보호)."""
+    def prune(self, keep_days: int = KEEP_DAYS, keep_count: int = 8) -> None:
+        """이틀 지난 것과 최신 8개를 넘는 것은 지운다 (판당 수백 MB가 OneDrive로 올라가서 빡빡하게)."""
         if not self.out_dir.exists():
             return
         cutoff = time.time() - keep_days * 86400
