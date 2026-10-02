@@ -404,3 +404,15 @@ def test_plus2_not_into_plenty3_before_13(chooser):
     # 13층 전엔 낭비끼리면 그나마 점수 높은 것 (칼날 > 후순위)
     d = chooser.choose_enhance(offer2, RunState(floor=5, owned=owned(칼날의_춤사위=2, 무영_사냥꾼=3)))
     assert d.card.potential.name == "칼날의 춤사위"
+
+
+def test_fish_takes_plenty3_lv2_when_rest_useless(chooser):
+    # 사용자 2026-10-03 01시: 13층부터 다다익선(3) 새 Lv2만 쓸 만하고 나머지가 쓸모없으면 리롤 대신 집는다
+    have = all_but("관통 탄도", "섬멸의 잔향")
+    st = RunState(floor=15, gold=1700, owned=dict(have), keep_after_gamble=True)
+    d = chooser.choose(cards(("칼날의 춤사위", 2), ("격노의 바람", 3), ("새벽을 여는 칼날", 1)), st)
+    assert d.action == "pick" and d.card.potential.name == "칼날의 춤사위"
+    # Lv2 예산을 다 썼으면 (점수가 안 붙어) 그대로 리롤
+    st2 = RunState(floor=15, gold=1700, owned=dict(have), keep_after_gamble=True, lv2_new_taken=4)
+    d = chooser.choose(cards(("칼날의 춤사위", 2), ("격노의 바람", 3), ("새벽을 여는 칼날", 1)), st2)
+    assert d.action == "reroll" and "필수 찾기" in d.reason

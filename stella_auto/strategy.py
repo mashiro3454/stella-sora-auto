@@ -242,7 +242,14 @@ class CardChooser:
             money = state.gold >= REROLL_COST + (0 if last else FISH_RESERVE)
             # 그 캐릭터 잠재를 6레벨 쪽으로 올리는 카드가 떠 있으면 리롤하지 않고 그걸 집는다 (사용자 설명)
             helps = any(vals[c.slot][0] and self.help_bonus(c, state) > 0 for c in cards)
-            if not hit and not core and not helps and not upgrade and more and money:
+            # 13층부터 다다익선(3) 새 Lv2만 쓸 만하고 나머지가 쓸모없으면 리롤 대신 집는다
+            # (사용자 2026-10-03 01시. 새 Lv3는 남는 기회 계산 그대로)
+            def plenty3_lv2(c: Card) -> bool:
+                g = self.goals.get(c.potential.id) if c.potential else None
+                return bool(c.is_new and c.level_to == 2 and g and g.mark == "다다익선"
+                            and g.target_level < self.w.plenty_high_min_target)
+            lv2_only = bool(ok) and all(plenty3_lv2(c) for c in ok)
+            if not hit and not core and not helps and not upgrade and not lv2_only and more and money:
                 state.fish_this_pick += 1
                 state.fish_total += 1
                 return Decision("reroll", None, f"필수 찾기 리롤 (0레벨: {', '.join(g.name for g in missing)})", values)
