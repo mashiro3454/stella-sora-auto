@@ -35,6 +35,9 @@ LAST_FLOOR = 20
 CHAR_LOCK_COUNT = 6
 CHAR_LOCK_UNFINISHED = 2
 UNLOCK_BONUS = 500
+# 막히진 않았어도 13층부터 0레벨 필수가 있는 캐릭터의 잠재 레벨업은 조금 더 쳐 주고, 필수 찾기 리롤 대신 집는다
+# (6레벨에 가까워질수록 그 캐릭터의 새 잠재가 잘 뜬다. 17:47 20층: 섬멸의 잔향 5→6을 5번 넘기며 리롤 50번, 돈을 다 씀)
+HELP_BONUS = 60
 # - 다다익선(목표 3)은 지원 캐릭터는 13층부터, 메인(레이스)은 18층부터 레벨당 35점 (새 Lv3 105점 > 필수 +1 100점)
 PLENTY_LOW_LATE = 35
 PLENTY_LOW_LATE_FLOOR = {"master": 18, "assist": 13}
@@ -125,9 +128,20 @@ class CardChooser:
             v = (min(card.level_to, cap) - min(cur, cap)) * self.weight(goal, state)
         if safeguard and card.level_to >= 2:
             v += SAFEGUARD_BONUS
-        if v > 0 and not card.is_new and cur < 6 and self.unlock_wanted(card.potential.char_id, state):
-            v += UNLOCK_BONUS
+        if v > 0:
+            v += self.help_bonus(card, state)
         return float(v), goal.mark
+
+    def help_bonus(self, card: Card, state: RunState) -> float:
+        """0레벨 필수가 있는 캐릭터의 6레벨 안 된 잠재 레벨업: 막혔으면 500, 13층부터는 60."""
+        if card.potential is None or card.is_new or (card.level_from or 0) >= 6:
+            return 0.0
+        cid = card.potential.char_id
+        if not any(self.char_of.get(g.id) == cid for g in self.missing_essentials(state)):
+            return 0.0
+        if self.char_locked(cid, state):
+            return float(UNLOCK_BONUS)
+        return float(HELP_BONUS) if state.floor >= FISH_FLOOR else 0.0
 
     def weight(self, goal: PotentialGoal, state: RunState) -> float:
         w = potential_weight(goal.mark, goal.target_level, self.w)
@@ -149,10 +163,6 @@ class CardChooser:
         lv = self.char_levels(char_id, state)
         return len(lv) >= CHAR_LOCK_COUNT and sum(1 for x in lv if x < 6) >= CHAR_LOCK_UNFINISHED
 
-    def unlock_wanted(self, char_id: int, state: RunState) -> bool:
-        """0레벨 필수가 있는데 그 캐릭터의 새 잠재가 막혀 있다: 그 캐릭터 잠재를 6레벨로 올려야 한다."""
-        return (any(self.char_of.get(g.id) == char_id for g in self.missing_essentials(state))
-                and self.char_locked(char_id, state))
 
     def _tiebreak(self, card: Card) -> tuple:
         # 점수가 같으면 (사용자 규칙, 2026-10-02 영상 검토):
@@ -197,7 +207,9 @@ class CardChooser:
             # 20층은 마지막이라 한 화면 횟수 제한 없이, 남길 돈 없이 (사용자: "먹을 때까지 리롤")
             more = last or state.fish_this_pick < FISH_PER_PICK
             money = state.gold >= REROLL_COST + (0 if last else FISH_RESERVE)
-            if not hit and not core and more and money:
+            # 그 캐릭터 잠재를 6레벨 쪽으로 올리는 카드가 떠 있으면 리롤하지 않고 그걸 집는다 (사용자 설명)
+            helps = any(vals[c.slot][0] and self.help_bonus(c, state) > 0 for c in cards)
+            if not hit and not core and not helps and more and money:
                 state.fish_this_pick += 1
                 state.fish_total += 1
                 return Decision("reroll", None, f"필수 찾기 리롤 (0레벨: {', '.join(g.name for g in missing)})", values)

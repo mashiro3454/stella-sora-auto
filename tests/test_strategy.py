@@ -197,13 +197,15 @@ def test_fish_keeps_preset_core(chooser):
 
 def test_plenty3_late_weight(chooser):
     # 지원 캐릭터의 다다익선(목표 3)은 13층부터 레벨당 35점: 새 Lv3(105) > 필수 +1(100) (19층 바람 장벽 > 숲속 3→4)
-    st = RunState(floor=13, owned=owned(숲속_공주의_은총=3))
+    have = all_but()
+    have[BY_NAME["숲속 공주의 은총"].id] = 3
+    st = RunState(floor=13, owned=have)
     d = chooser.choose(cards(("바람 장벽", 3), ("숲속 공주의 은총", 4, 3)), st)
     assert d.card.potential.name == "바람 장벽"
     # 메인(레이스)의 다다익선(목표 3)은 18층부터
     offer = cards(("칼날의 춤사위", 3), ("숲속 공주의 은총", 4, 3))
-    assert chooser.choose(offer, RunState(floor=17)).card.potential.name == "숲속 공주의 은총"
-    assert chooser.choose(offer, RunState(floor=18)).card.potential.name == "칼날의 춤사위"
+    assert chooser.choose(offer, RunState(floor=17, owned=have)).card.potential.name == "숲속 공주의 은총"
+    assert chooser.choose(offer, RunState(floor=18, owned=have)).card.potential.name == "칼날의 춤사위"
 
 
 def test_tiebreak_below_target_then_character_then_level(chooser):
@@ -272,4 +274,17 @@ def test_locked_character_upgrades_instead_of_fishing(chooser):
     have[BY_NAME["관통 탄도"].id] = 6
     st = RunState(floor=20, gold=1000, owned=have)
     assert not chooser.char_locked(BY_NAME["관통 탄도"].char_id, st)
-    assert "필수 찾기" in chooser.choose(cards(("결전의 순간", 5, 4), ("전투력 증폭", 6, 5)), st).reason
+    assert "필수 찾기" in chooser.choose(cards(("결전의 순간", 5, 4), ("칼날의 춤사위", 3)), st).reason
+
+
+def test_fish_takes_upgrade_of_same_character(chooser):
+    # 17:47 20층: 전투력 증폭(엘레노어)을 찾으며 섬멸의 잔향 5→6을 5번 넘기고 리롤 50번에 돈을 다 썼다.
+    # 같은 캐릭터 잠재를 6레벨 쪽으로 올리는 카드가 뜨면 리롤 대신 집는다 (새 엘레노어 잠재가 잘 뜨게)
+    have = all_but("전투력 증폭")
+    have.update({BY_NAME["섬멸의 잔향"].id: 5, BY_NAME["바람 정령의 공명"].id: 2})
+    st = RunState(floor=20, gold=1500, owned=have)
+    d = chooser.choose(cards(("동력 증압", 1), ("바람 정령의 공명", 3, 2), ("섬멸의 잔향", 6, 5)), st)
+    assert d.action == "pick" and d.card.potential.name == "섬멸의 잔향"
+    # 다른 캐릭터 레벨업만 뜨면 계속 찾는다
+    d = chooser.choose(cards(("바람 장벽", 2), ("가속 돌파", 1), ("숲속 공주의 은총", 5, 4)), st)
+    assert d.action == "reroll" and "필수 찾기" in d.reason
