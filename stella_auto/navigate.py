@@ -46,12 +46,20 @@ def angle_of_keys(keys: tuple[str, ...]) -> float | None:
     return next((a for a, k in DIRECTIONS if k == tuple(keys)), None)
 
 
-def find_character(img: np.ndarray) -> tuple[float, float] | None:
+def find_character(img: np.ndarray, near: tuple[float, float] | None = None) -> tuple[float, float] | None:
     """캐릭터 발 위치 (화면 좌표). 체력바(칸이 한 줄로 늘어선 것)를 못 찾으면 None.
 
     체력바 칸은 찬 칸이 초록, 빈 칸이 어두운 회청색이다. 체력이 반쯤 깎이면 초록 칸이 2개 남짓이라
     (8층: 2.5칸) 초록 칸만 세면 못 찾고 봇이 4분 동안 멈춰 있었다. 그래서 빈 칸도 함께 센다.
+    near: 직전에 본 발 위치. 그 주변 창부터 찾아서 (전체 34ms -> 창 ~4ms) 못 찾으면 전체를 본다.
     """
+    if near is not None:
+        x0 = max(0, int(near[0]) - 280)
+        y0 = max(0, int(near[1] + HP_BAR_TO_FEET) - 180)
+        crop = img[y0:y0 + 360, x0:x0 + 560]
+        hit = find_character(crop)
+        if hit is not None:
+            return hit[0] + x0, hit[1] + y0
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     green = ((hsv[..., 0] > 35) & (hsv[..., 0] < 85) & (hsv[..., 1] > 120) & (hsv[..., 2] > 150)).astype(np.uint8)
     empty = ((hsv[..., 0] > 100) & (hsv[..., 0] < 130) & (hsv[..., 1] > 15) & (hsv[..., 1] < 70)

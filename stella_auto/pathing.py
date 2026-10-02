@@ -347,6 +347,7 @@ class Navigator:
         held: tuple[str, ...] = ()
         held_since = t0
         lost = 0
+        last_char: tuple[float, float] | None = None  # 직전 발 위치: 그 주변부터 찾는다 (34ms -> ~5ms)
         blocks = 0
         stuck_at: deque = deque(maxlen=6)  # 막힌 자리들 (같은 자리에서 또 막히면 억지로 적고, 세 번이면 빠져나온다)
         last_goal_kind = ""
@@ -360,7 +361,7 @@ class Navigator:
                     if self.last_pos:
                         self.last_stop = (now, self.last_pos)
                     return NavResult("stopped", now - t0)
-                char = nv.find_character(img)
+                char = nv.find_character(img, near=last_char)
                 if char is None:
                     lost += 1
                     # 카메라가 캐릭터를 따라가니 못 찾아도 화면 가운데로 보고 걷는다 (17층: 체력바를 못 읽어
@@ -369,6 +370,7 @@ class Navigator:
                         return NavResult("lost", now - t0)
                 else:
                     lost = 0
+                    last_char = char
                 pos = self.observe(img, char)
                 goal = goal_fn(img, char or CHAR_FALLBACK, pos)
                 if avoid_exit and self._exit_too_close(img, char or CHAR_FALLBACK, pos, goal.pos if goal else None):
