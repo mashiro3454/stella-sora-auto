@@ -611,6 +611,13 @@ class Bot:
             out.append((name, (x, y, w, h), m[0] == "상점"))
         return out
 
+    def near_shop_spot(self, box: tuple[int, int, int, int]) -> bool:
+        """이름표가 기억해 둔 상점 자리 근처인지. 상점 NPC 이름을 "?"로 읽으면 '말 건 목록'에 안 남아서,
+        상점이 끝난 뒤 일반 NPC인 줄 알고 또 걸어갔다 온다 (22:48 12층 포셔)."""
+        x, y, w, h = box
+        wx, wy = self.nav.odo.to_world((x + w / 2, y + h / 2))
+        return any(math.hypot(wx - sx, wy - sy) < 300 for sx, sy in self.nav.spots("shop"))
+
     def already_talked(self, name: str) -> bool:
         """OCR이 같은 이름을 "베르너/베트너/베드너"처럼 다르게 읽어서, 비슷하면 같은 NPC로 친다."""
         return any(fuzz.ratio(name, t) >= 60 for t in self.talked if t != "?")
@@ -954,7 +961,8 @@ class Bot:
         if now - self.npc_scanned > NPC_SCAN_EVERY and not enhance_first:
             self.npc_scanned = now
             shop_ok = self.has_shop() and not self.shop_done and not self.want_enhance(img)
-            todo = [lb for lb in self.npc_labels(img) if not self.already_talked(lb[0]) and (not lb[2] or shop_ok)]
+            todo = [lb for lb in self.npc_labels(img) if not self.already_talked(lb[0])
+                    and (not (lb[2] or (self.has_shop() and self.near_shop_spot(lb[1]))) or shop_ok)]
             if not todo:  # 이름표 OCR이 실패했을 수 있다: 초록 딱지를 색으로 찾는다
                 todo = [lb for lb in self.green_tag_npcs(img, char)
                         if not self.already_talked(lb[0]) and (not lb[2] or shop_ok)]
