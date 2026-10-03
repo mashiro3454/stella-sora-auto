@@ -2099,6 +2099,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="한 층씩: 650원을 이기면 멈추고, 그 뒤 층마다 멈춘다. logs/step.go 파일을 만들면 다음 층까지")
     ap.add_argument("--step-pause", type=float, default=0.0,
                     help="650원 이긴 판에서 층을 떠나기 전에 이만큼(초)만 멈춘다 (지켜보기용 가벼운 모드)")
+    ap.add_argument("--fresh", action="store_true",
+                    help="켜자마자 지금 판을 포기하고 새 판부터 (탑 한가운데여도 이어받지 않는다)")
     ap.add_argument("--mode650", action="store_true",
                     help="650모드: 650원을 이기면 멈춰서 기다리고 (logs/step.go로 진행), 그 뒤엔 층마다 5초 멈춤"
                          " + 카드 고르기 전 1초 틈 (--step --step-pause 5와 같다)")
@@ -2131,10 +2133,15 @@ def main(argv: list[str] | None = None) -> int:
         bot.log("멈춤", "F12 (즉시)")
 
     killswitch.start(emergency_stop)
+    if args.fresh:
+        (ROOT / "logs" / "run_state.json").unlink(missing_ok=True)
     # 봇이 도는 동안 윈도우가 절전으로 들어가거나 화면을 끄지 않게 (봇이 끝나면 저절로 풀린다. 설정은 안 바꾼다)
     ES_CONTINUOUS, ES_SYSTEM_REQUIRED, ES_DISPLAY_REQUIRED = 0x80000000, 0x00000001, 0x00000002
     kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
     try:
+        if args.fresh:
+            bot.log("시작", "--fresh: 지금 판을 포기하고 새 판부터")
+            bot.start_from_menu(give_up=True)
         bot.play(args.floors)
     except Stop as e:
         bot.log("멈춤", str(e))
