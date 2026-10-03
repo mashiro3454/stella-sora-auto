@@ -207,7 +207,8 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
     - 마지막 상점(20층)에선 돈이 안 남게 다 산다.
     - 카드 리롤용으로 reserve(기본 80원)는 남긴다 (마지막 상점 제외). 강화머신을 상점 뒤에 쓸 거면
       그 값(enhance_reserve)도 남긴다.
-    - 상점 리롤은 2번째, 4번째 상점에서 할인 상품을 다 산 뒤에 한다 (남은 횟수가 있을 때).
+    - 상점 리롤 2번은 꼭 다 쓴다 (사용자 2026-10-03): 2번째 상점부터, 할인 상품을 다 산 뒤에,
+      남은 횟수가 있으면 리롤하고 나서 200원짜리를 산다 (리롤 100원 < 새로 생기는 할인 이득).
     """
     buy: list[ShopItem] = []
     money = gold
@@ -247,8 +248,10 @@ def plan_purchases(items: list[ShopItem], gold: int, *, shop_index: int, last_sh
         if note_needs is not None and getattr(note_needs, "needs", None) and it.note_type is not None                 and note_needs.gain(it.note_type, it.note_count or 5) == 0:
             continue  # 협주 진행에 한 칸도 안 차는 소리는 정가로 안 산다
         take(it)  # 5개 90원
-    reroll = (shop_index in (2, 4) and reroll_left > 0 and reroll_price is not None
-              and money - reroll_price >= keep)
+    # 상점 리롤 2번은 다 쓰고 나가는 게 이득 (사용자 2026-10-03: 100원으로 할인 상품이 새로 생긴다).
+    # 2번째 상점부터, 할인 상품을 다 산 뒤에, 남은 횟수가 있으면 리롤. 가격을 못 읽었으면 100원으로 친다
+    reroll = (shop_index >= 2 and reroll_left > 0
+              and money - (reroll_price if reroll_price is not None else 100) >= keep)
     if not reroll:
         full_keep = keep if last_shop else max(keep, FULL_PRICE_KEEP.get(shop_index, 1000) + enhance_reserve)
         full_potions = sorted([i for i in avail if i.kind == "potential" and not i.discounted],

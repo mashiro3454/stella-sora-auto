@@ -126,6 +126,9 @@ class Bot:
         self._last_cards: tuple | None = None  # 직전에 읽은 카드 (두 번 연속 같아야 고른다)
         self._card_prev: np.ndarray | None = None  # 카드 멈춤 판정용 직전 화면 조각
         self.card_pool_char: int | None = None  # 방금 산 음료의 얼굴 캐릭터 (이어지는 카드 화면의 풀)
+        self.pending_npc: tuple[float, float] | None = None  # 걸어가다 끊긴 NPC 자리 (월드)
+        self.pending_npc_tries = 0
+        self.shop_rerolls_run = 0  # 이 판에서 쓴 상점 리롤 (탑 전체 2번)
         self._card_wait_since = 0.0
         self._last_choice_bands: tuple | None = None
         self._declined: str | None = None  # ESC로 안 고르고 나간 선택지 질문
@@ -521,6 +524,8 @@ class Bot:
         self._last_cards = None
         self._card_prev = None
         self.card_pool_char = None
+        self.pending_npc = None
+        self.pending_npc_tries = 0
         self.room = room
         self.talked = set()
         self.talk_spots: list = []  # 이 층에서 F로 말을 건 자리들
@@ -838,6 +843,8 @@ class Bot:
                         it.users = self.note_needs.users.get(it.note_type, 0)
                         it.have = self.note_needs.have.get(it.note_type)
             price, left = read_reroll(img, self.ocr)
+            if left is None:
+                left = max(0, 2 - self.shop_rerolls_run)  # "남은 횟수"를 못 읽으면 판 장부로 (리롤을 꼭 다 쓰게)
             if self.shop_rerolled:
                 left = 0
             # 강화머신을 아직 덜 눌렀으면 그 돈을 남기되, 올릴 잠재가 아예 없으면 남기지 않는다
@@ -885,6 +892,7 @@ class Bot:
             return
         if self.shop_plan.reroll and not self.shop_rerolled:
             self.shop_rerolled = True
+            self.shop_rerolls_run += 1
             self.shop_plan = None
             self.log("상점", "상점 새로고침 (Q)")
             self.gi.key("q")
@@ -994,6 +1002,9 @@ class Bot:
                 self.talked.add(name)
                 if here is not None:
                     self.talk_spots.append(here)
+                    if self.pending_npc and math.hypot(here[0] - self.pending_npc[0],
+                                                       here[1] - self.pending_npc[1]) < 350:
+                        self.pending_npc = None
                 self.last_talk_at = now
                 self.log("NPC", f"{name}에게 F로 말 걸기", img)
                 self.gi.key("f")
@@ -1046,6 +1057,11 @@ class Bot:
                 res = self.nav.walk(self.label_goal(img, box, 60), self.stop_for("talk"), max_sec=15,
                                     avoid_exit=True, why=f"NPC {name}")
                 self.log("NPC", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
+                if res.reason == "stopped" and nv.find_prompt(self.grab()) != "talk":
+                    # 걸어가다 카드/소리 화면에 끊겼다: 자리를 기억해 두고 나중에 되돌아간다 (10:06 17층 고티)
+                    wx, wy = self.nav.odo.to_world((box[0] + box[2] / 2, box[1] + box[3] + 60))
+                    self.pending_npc = (wx, wy)
+                    self.pending_npc_tries = 0
                 if res.reason == "arrived" and self.nudge_until("talk", first="w"):
                     return None  # 말 걸기 표시가 떴다: 다음 화면에서 F
                 if res.reason not in ("stopped", "near_exit"):
@@ -1081,6 +1097,27 @@ class Bot:
             self.log("상점", f"{names.get(self.preset.enhance_first, '우선 캐릭터')} 잠재가 없어서 상점을 다시 간다"
                            f" ({self.shop_reopens}번째, 돈 {self.run.gold})")
             return None
+
+        # 2-0) 가다 만 NPC가 있으면 (걸어가다 카드 화면 등에 끊김) 전투가 끝난 뒤 되돌아간다
+        if (self.pending_npc and self.combat_done and now - self.last_talk_at > TALK_COOLDOWN
+                and not any(math.hypot(self.pending_npc[0] - sx, self.pending_npc[1] - sy) < 300
+                            for sx, sy in self.talk_spots)):
+            self.pending_npc_tries += 1
+            target = self.pending_npc
+            if self.pending_npc_tries > 2:
+                self.log("NPC", "가다 만 NPC 자리에 두 번 가 봤지만 못 만남, 포기")
+                self.pending_npc = None
+            else:
+                self.log("NPC", f"가다 만 NPC 자리로 되돌아감 ({target[0]:.0f}, {target[1]:.0f})")
+                res = self.nav.walk(lambda im, ch, p: Goal(target, "npc", arrive=60), self.stop_for("talk"),
+                                    max_sec=15, avoid_exit=True, why="가다 만 NPC")
+                self.log("NPC", f"걷기 결과 {res.reason} ({res.secs:.0f}초)")
+                if res.reason == "arrived":
+                    self.nudge_until("talk", first="w")
+                if nv.find_prompt(self.grab()) == "talk" or res.reason in ("no_path", "no_progress", "lost"):
+                    self.pending_npc = None if res.reason != "arrived" else self.pending_npc
+                self.npc_scanned = 0.0
+                return None
 
         # 2-1-1) 거래의 방은 강화머신과 상점이 끝나야 나간다
         # 20층은 보스를 잡은 뒤 마지막 상점이 있다 (돈을 다 쓴다)
@@ -1250,11 +1287,13 @@ class Bot:
                     self.trade_fails += 1
             else:
                 self.trade_fails = 0
-        elif now - self.last_talk_at > 2.5:
-            # 자리엔 왔는데 표시가 안 뜬다: 조금씩 움직여 본다
+        elif now - self.last_talk_at > 4.0:
+            # 자리엔 왔는데 표시가 한참 안 뜬다: 조금씩 움직여 본다 (카드 화면에서 막 돌아온 직후엔
+            # 표시가 다시 뜨길 기다리면 되는데 매번 꼼지락거려서 정형행동처럼 보였다 — 사용자 지적)
             self.nudge_until(want_prompt, first="s" if want_e else "w")
+            self.last_talk_at = now - 2.0  # 다음 꼼지락은 2초 뒤에
         else:
-            time.sleep(0.2)
+            time.sleep(0.25)
         return True
 
     def go_spot(self, kind: str) -> bool:
@@ -1468,6 +1507,7 @@ class Bot:
             if s == "field":
                 if departed:
                     self.run = RunState(floor=1)
+                    self.shop_rerolls_run = 0
                     self.run_tracked = True
                     self.new_floor(1, "전투")
                     self.gamble_won = False
@@ -1663,7 +1703,7 @@ class Bot:
                 # 리셋돼 180원까지 규칙인데 실제론 240원짜리를 눌렀다)
                 "enhance_count": self.enhance_count, "shop_done": self.shop_done,
                 "shop_rerolled": self.shop_rerolled, "shop_reopens": self.shop_reopens,
-                "plus2_taken": r.plus2_taken}
+                "plus2_taken": r.plus2_taken, "shop_rerolls_run": self.shop_rerolls_run}
         try:
             tmp = self.state_path().with_suffix(".tmp")
             tmp.write_text(json.dumps(data), encoding="utf-8")
@@ -1684,6 +1724,7 @@ class Bot:
         self.run.lv2_new_taken = d["lv2_new_taken"]
         self.run.rerolls_early = d["rerolls_early"]
         self.run.plus2_taken = d.get("plus2_taken", 0)
+        self.shop_rerolls_run = d.get("shop_rerolls_run", 0)
         self.gamble_won = d["gamble_won"]
         self.run.keep_after_gamble = self.gamble_won
         self.run_tracked = True

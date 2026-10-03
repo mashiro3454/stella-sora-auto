@@ -173,3 +173,13 @@ def test_plan_prefers_eleanor_capable_drinks():
     # 옵션이 없으면 가격순 그대로
     plan = plan_purchases(items, 2000, shop_index=4, last_shop=True, reroll_left=0, reroll_price=None)
     assert [i.slot for i in plan.buy][:4] == [0, 1, 2, 3]
+
+
+def test_reroll_any_shop_from_second_even_without_price():
+    # 사용자 2026-10-03: 리롤 2번은 꼭 다 쓴다. 3번째 상점에서도, 가격 OCR이 안 돼도 (100원으로 침)
+    items = [item(0, "잠재력 특제 음료", 100, 200)]
+    p = plan_purchases(items, 900, shop_index=3, last_shop=False, reroll_left=1, reroll_price=None)
+    assert p.reroll
+    # 1번째 상점에선 안 함
+    p = plan_purchases(items, 900, shop_index=1, last_shop=False, reroll_left=2, reroll_price=100)
+    assert not p.reroll
