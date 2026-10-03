@@ -300,6 +300,8 @@ class Bot:
         diffs = [g - before for g in [gold] + ([int(str(gold)[1:])] if len(str(gold)) >= 3 else [])]
         if any(350 <= d <= 1500 for d in diffs):
             self.log("650원", f"카드 화면 돈으로 다시 확인: 성공 ({before} -> {gold})")
+            if self.step_mode:
+                self.pause_pending = "650원 성공 (카드 화면 돈으로 확인)"
         elif any(-450 <= d <= -100 for d in diffs):
             self.gamble_won = False
             self.run.keep_after_gamble = False
@@ -947,7 +949,9 @@ class Bot:
                 self._gamble_verify = self._gamble_gold_before
                 won = True
             self.gamble_won = self.gamble_won or won
-            if won and self.step_mode:
+            if won and self.step_mode and self._gamble_verify is None:
+                # 결과를 직접 읽어 확정했을 때만 멈춘다. 못 읽고 "일단 성공으로 치고 카드 화면에서
+                # 재확인"하는 길이면 재확인 뒤에 멈춘다 (19:52: 실패한 판에서 성공이라고 멈췄다)
                 self.pause_pending = "650원 성공"
             self.run.keep_after_gamble = self.gamble_won
             self.log("650원", f"{'성공' if won else '실패'} ({why})", img)
