@@ -2086,6 +2086,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="한 층씩: 650원을 이기면 멈추고, 그 뒤 층마다 멈춘다. logs/step.go 파일을 만들면 다음 층까지")
     ap.add_argument("--step-pause", type=float, default=0.0,
                     help="650원 이긴 판에서 층을 떠나기 전에 이만큼(초)만 멈춘다 (지켜보기용 가벼운 모드)")
+    ap.add_argument("--mode650", action="store_true",
+                    help="650모드: 650원을 이기면 멈춰서 기다리고 (logs/step.go로 진행), 그 뒤엔 층마다 5초 멈춤"
+                         " + 카드 고르기 전 1초 틈 (--step --step-pause 5와 같다)")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -2101,6 +2104,8 @@ def main(argv: list[str] | None = None) -> int:
     pid_file.write_text(str(os.getpid()))
     bot = Bot(Preset.load(args.preset))
     bot.require_gamble = not args.no_gamble
+    if args.mode650:
+        args.step, args.step_pause = True, args.step_pause or 5.0
     bot.step_mode = args.step
     bot.step_pause_sec = args.step_pause
     bot.max_runs = args.runs
