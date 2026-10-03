@@ -840,8 +840,10 @@ class Bot:
             price, left = read_reroll(img, self.ocr)
             if self.shop_rerolled:
                 left = 0
-            # 강화머신을 아직 덜 눌렀는데 강화할 만한 잠재가 없어서 상점부터 왔다: 나중에 강화할 돈을 남긴다
-            reserve = self.enhance_reserve() if self.room == "거래" or self.run.floor == 20 else 0
+            # 강화머신을 아직 덜 눌렀으면 그 돈을 남기되, 올릴 잠재가 아예 없으면 남기지 않는다
+            # (10:36 20층: 전부 6렙+섬멸 0렙이라 머신을 안 가는데 360원을 떼어놔 200원 음료를 포기했다)
+            reserve = (self.enhance_reserve() if (self.room == "거래" or self.run.floor == 20)
+                       and not (self.run_tracked and not self.worth_enhancing()) else 0)
             self.shop_plan = plan_purchases(items, gold, shop_index=self.shop_index, last_shop=self.run.floor >= 20,
                                             reroll_left=left, reroll_price=price,
                                             note_have=self.note_needs.have if self.note_needs else None,
