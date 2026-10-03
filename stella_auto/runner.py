@@ -131,6 +131,7 @@ class Bot:
         self.shop_rerolls_run = 0  # 이 판에서 쓴 상점 리롤 (탑 전체 2번)
         self._card_wait_since = 0.0
         self._last_choice_bands: tuple | None = None
+        self._choice_entered = 0.0  # 선택지 화면에 들어온 때 (너무 오래 못 읽으면 빈 곳을 눌러 본다)
         self._declined: str | None = None  # ESC로 안 고르고 나간 선택지 질문
         self._quiz_waits = 0
         self.loading_at: float | None = None  # 층 사이 로딩을 본 때 (방 제목을 놓치면 이걸로 층을 센다)
@@ -409,12 +410,22 @@ class Bot:
 
     def on_choice(self, img: np.ndarray) -> None:
         # 보기 상자는 미끄러져 들어온다. 상자 위치가 두 번 연속 같을 때 읽는다
+        now = time.monotonic()
+        if now - self._choice_entered > 90:  # 17:45 3층: 보기를 못 읽는 채 7분을 조용히 돌았다
+            self._choice_entered = now
+        if self._choice_entered == 0.0:
+            self._choice_entered = now
         bands = tuple(find_option_boxes(img))
         if not bands or bands != self._last_choice_bands:
             self._last_choice_bands = bands
+            if now - self._choice_entered > 25:
+                self.log("선택지", "보기 상자를 25초째 못 읽음, 빈 곳을 눌러 봄", img)
+                self.gi.click(*EMPTY_SPOT)
+                self._choice_entered = now
             time.sleep(0.3)
             return
         self._last_choice_bands = None
+        self._choice_entered = 0.0
         question, options = read_choices(img, self.ocr)
         if not options:
             time.sleep(0.4)
@@ -998,7 +1009,7 @@ class Bot:
             # (전엔 "말 건 목록"이 비어 있지만 않으면 건너뛰어서, 보스 이름을 목록에 넣은 20층에서 상점을 놓쳤다)
             here = self.nav.last_pos
             near_last = here is not None and any(math.hypot(here[0] - p[0], here[1] - p[1]) < 250 for p in self.talk_spots)
-            if not self.already_talked(name) and not near_last:
+            if not self.already_talked(name) and not (name == "?" and near_last):
                 self.talked.add(name)
                 if here is not None:
                     self.talk_spots.append(here)
@@ -1504,6 +1515,8 @@ class Bot:
                 repeats += 1
                 if repeats in (15, 40):
                     self.log("메뉴", f"화면 {s}에서 {repeats}번째", img)
+            if s == "loading" and repeats in (20, 40, 60):
+                self.gi.click(*EMPTY_SPOT)  # 검은 화면이 안 끝날 때 (17:52: loading에 3분 갇혀 꺼짐)
             if s == "field":
                 if departed:
                     self.run = RunState(floor=1)
