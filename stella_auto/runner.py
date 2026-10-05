@@ -265,6 +265,7 @@ class Bot:
                 out = [v] + ([int(s[1:])] if len(s) >= 3 else [])
                 out += [int("1" + s[1:])] if one and len(s) >= 4 and s[0] != "1" else []
                 out += [int("1" + s)] if one and len(s) == 3 else []  # 맨 앞 1을 빠뜨림 (13:34 1130 -> "130")
+                out += [int(s[:-1])] if one and len(s) >= 4 else []  # 끝에 쓰레기 숫자 (22:03 1130 -> "11304")
                 return out + ([v * 10] if one and len(s) <= 3 else [])  # 끝 0을 빠뜨림 (09:17 280 -> "28")
 
             for b in cands(before):
