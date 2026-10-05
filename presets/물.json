@@ -1,0 +1,270 @@
+{
+  "title": "물팀 엘리",
+  "characters": [
+    {
+      "slot": "master",
+      "char_id": 139,
+      "name": "엘리",
+      "potentials": [
+        {
+          "id": 513903,
+          "name": "먼지 제거 소용돌이",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 0,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 513904,
+          "name": "청소의 연속",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 1,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 513910,
+          "name": "추가 작업",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 2,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 513908,
+          "name": "칼날 휩쓸기",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 3,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 513909,
+          "name": "청소 대기 지점",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 4,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 513942,
+          "name": "빠른 먼지 제거",
+          "kind": "common",
+          "card_color": "gold",
+          "order": 5,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 513913,
+          "name": "빗자루 휩쓸기",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 6,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "다다익선"
+        },
+        {
+          "id": 513912,
+          "name": "중복 청소",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 7,
+          "target_level": 2,
+          "max_level": 9,
+          "mark": "후순위"
+        }
+      ]
+    },
+    {
+      "slot": "assist1",
+      "char_id": 160,
+      "name": "윌로(여름)",
+      "potentials": [
+        {
+          "id": 516021,
+          "name": "흩날리는 물꽃",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 0,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 516022,
+          "name": "해안을 덮치는 격류",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 1,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 516026,
+          "name": "낮게 부는 바닷바람",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 2,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 516025,
+          "name": "여전한 훈계",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 3,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 516028,
+          "name": "도시를 삼키는 파도",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 4,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 516043,
+          "name": "해풍의 규율",
+          "kind": "common",
+          "card_color": "gold",
+          "order": 5,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "다다익선"
+        },
+        {
+          "id": 516033,
+          "name": "온화한 바람과 파도",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 6,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "다다익선"
+        },
+        {
+          "id": 516027,
+          "name": "멈추지 않는 바다 소리",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 7,
+          "target_level": 2,
+          "max_level": 9,
+          "mark": "명함만"
+        }
+      ]
+    },
+    {
+      "slot": "assist2",
+      "char_id": 127,
+      "name": "테레사",
+      "potentials": [
+        {
+          "id": 512721,
+          "name": "끝없는 분출·무한",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 0,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 512722,
+          "name": "끝없는 분출·물결",
+          "kind": "core",
+          "card_color": "pink",
+          "order": 1,
+          "target_level": 1,
+          "max_level": 1,
+          "mark": null
+        },
+        {
+          "id": 512725,
+          "name": "대단하지!",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 2,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 512741,
+          "name": "끝없는 파도",
+          "kind": "common",
+          "card_color": "gold",
+          "order": 3,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 512733,
+          "name": "지름길의 행인",
+          "kind": "normal",
+          "card_color": "purple",
+          "order": 4,
+          "target_level": 6,
+          "max_level": 9,
+          "mark": "필수"
+        },
+        {
+          "id": 512726,
+          "name": "조금만 더 버텨!",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 5,
+          "target_level": 1,
+          "max_level": 9,
+          "mark": "명함만"
+        },
+        {
+          "id": 512742,
+          "name": "속성 해방",
+          "kind": "common",
+          "card_color": "gold",
+          "order": 6,
+          "target_level": 4,
+          "max_level": 9,
+          "mark": "다다익선"
+        },
+        {
+          "id": 512731,
+          "name": "반창고 수집가",
+          "kind": "normal",
+          "card_color": "gold",
+          "order": 7,
+          "target_level": 2,
+          "max_level": 9,
+          "mark": "후순위"
+        }
+      ]
+    }
+  ],
+  "share_code": "",
+  "warnings": [],
+  "priority": [],
+  "enhance_first": null
+}
