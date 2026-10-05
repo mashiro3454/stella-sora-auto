@@ -130,8 +130,8 @@ def test_free_notes_pick_what_ensembles_use():
             ("난 전부 잘 들어.", "랜덤 소리 5개 획득")]
     idx, rule = choose_option(opts, 2, note_users=users)
     assert idx == 2 and "랜덤" in rule
-    # 가방을 아직 못 읽었으면 예전처럼, 돈이 드는 보기가 섞이면 이 규칙이 아니다
-    assert choose_option(opts, 2)[0] == 0
+    # 협주 정보가 아예 없으면 랜덤 (2026-10-05 물팀 첫 판)
+    assert choose_option(opts, 2)[0] == 2
     paid = [("노래", "1400 소모, 10개의 강공의 소리 획득"), ("듣자", "900 소모, 10개의 랜덤 소리 획득"), ("지금은 안 돼.", "")]
     assert choose_option(paid, 2, note_users=users)[0] == 2
 
@@ -193,6 +193,7 @@ def test_unknown_gamble_rechecked_on_card_screen():
         b = Bot.__new__(Bot)
         b.run = RunState(floor=3)
         b.gamble_won, b.run_tracked, b.restart_pending = True, False, ""
+        b.step_mode = False
         b._gamble_verify = 510
         b.log = lambda *a, **k: None
         b.verify_gamble(gold)
