@@ -300,3 +300,11 @@ def test_free_notes_by_marginal_gain():
     # 가방을 아직 못 읽었으면 (needs 없음) 예전 규칙: 많이 쓰는 강공
     idx, rule = choose_option(opts, 2, "", note_users={0: 3, 1: 2}, note_have={0: 10})
     assert idx == 0, rule
+
+
+def test_free_notes_random_when_users_unknown():
+    # 11:51 물팀 첫 판: 협주 정보가 없는데 공짜 소리에서 첫 번째(강공)를 집었다 -> 랜덤이 맞다
+    opts = [("노래, 골라도 도H?", "강공의 소리쬐 5개 획득"), ("노래, 골라도 EH?", "1필살기의 소리土 5개 획득"),
+            ("네가 듣고 싶은 결로 듣자.", "랜덤 소리 5개 획득")]
+    idx, rule = choose_option(opts, 2, "노래가 듣고 싶어? 자, 같이 듣자.")
+    assert idx == 2 and "랜덤" in rule

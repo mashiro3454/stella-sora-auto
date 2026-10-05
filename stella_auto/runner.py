@@ -1531,6 +1531,9 @@ class Bot:
                     self._gamble_verify = None
                     self.note_needs = None  # 가진 소리 개수는 판마다 처음부터 (쓰는 협주스킬 수는 note_users에 남는다)
                     self.log("시작", "새 판 1층")
+                    if not self.note_users:
+                        self.peek_bag()  # 새 프리셋 첫 판: 협주가 쓰는 소리를 미리 배운다 (공짜 소리 규칙용)
+                        self.shop_peeked = False  # 상점에서의 가방 읽기는 그대로 (가진 개수가 바뀌니)
                     return
                 if give_up:
                     self.gi.key("esc")
@@ -2064,13 +2067,17 @@ def free_note_choice(texts: list[str], note_users: dict[int, int] | None,
     행운 +5는 협주 둘을 5칸씩 채운다). 전부 0칸이면 랜덤 (필요량 넘긴 소리만 남은 것).
     아직 못 읽었으면 예전 규칙: 많이 쓰는 것 > 덜 가진 것, 1개만 쓰는데 40개 이상이면 랜덤."""
     have = note_have or {}
-    if not note_users or len(texts) < 2:
+    if len(texts) < 2:
         return None
     kinds: list[tuple[int, int | None, bool]] = []
     for i, s in enumerate(texts):
         if "소리" not in s or "획득" not in s or any(w in s for w in loss):
             return None
         kinds.append((i, type_from_name(s), "랜덤" in s))
+    if not note_users:
+        # 새 프리셋이라 협주 정보를 아직 모른다: 엉뚱한 소리를 집지 말고 랜덤 (11:51 물팀 첫 판)
+        rnd = [i for i, _, r in kinds if r]
+        return (rnd[0], "공짜 소리: 협주 정보 없음이라 랜덤") if rnd else None
     if note_needs is not None and note_needs.needs:
         ranked = [(note_needs.gain(t), note_users.get(t, 0), -have.get(t, 0), -i, i, t)
                   for i, t, rnd in kinds if t is not None and not rnd]
